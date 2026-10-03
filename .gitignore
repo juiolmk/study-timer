@@ -1,0 +1,17 @@
+# 构建产物
+dist/
+build/
+*.spec
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# 本地项目数据（非源码）
+.workbuddy/
+
+# 操作系统 / 编辑器
+.DS_Store
+Thumbs.db
