@@ -1,22 +1,39 @@
 # -*- coding: utf-8 -*-
-"""记录页：搜索、按标签筛选、增删改（分页懒加载）。
+"""记录页：搜索、按标签筛选、增删改（Canvas 自绘 + 分页懒加载）。
 
-记录量大时（千条以上）一次性创建上千个 Tk 控件会卡住主线程，
-因此这里改为“先算全量、只渲染前 N 条，需要时再加载更多”。
+为什么不用“每行一套 Frame/Label”：
+- 记录上千条时，Tk 的控件布局成本会线性膨胀；把行放在 Canvas 内嵌 Frame
+  里更会被放大（实测 50 行普通布局 ~67ms，Canvas 内嵌 ~720ms）。
+- 这里直接把卡片、文字、标签、操作区画在 Canvas 上，50 行只需几百个
+  canvas item，首屏成本与记录总量脱钩。
+
+交互：
+- 单击“编辑/删除”文字命中对应操作；双击行主体也可编辑。
+- 底部“加载更多”为可点击文字。
+- 删除/编辑后保留已加载页数与滚动位置；搜索/标签/切页回到首屏。
 """
 
 from __future__ import annotations
 
 import logging
 import tkinter as tk
+import tkinter.font as tkfont
 from tkinter import messagebox, ttk
 
-from ..widgets import Card, RoundedButton, ScrollableFrame, make_entry
+from ..widgets import RoundedButton, make_entry, round_rect
 
 logger = logging.getLogger(__name__)
 
 #: 每次（首屏）最多渲染的记录条数
 PAGE_SIZE = 50
+#: 单行卡片高度
+ROW_H = 66
+#: 行间距
+ROW_GAP = 10
+#: 行内左右留白
+PAD = 16
+#: 卡片圆角
+RADIUS = 10
 
 
 class RecordsPage(tk.Frame):
@@ -24,12 +41,23 @@ class RecordsPage(tk.Frame):
         super().__init__(master, bg=theme.p.bg)
         self.app = app
         self.t = theme
+
         #: 当前筛选条件下的完整结果（未截断）
         self.rec_filtered = []
-        #: 已渲染上限；必须先于首次 refresh() 初始化
+        #: 已渲染上限
         self._limit = PAGE_SIZE
-        #: 底部页脚（“加载更多”/“已显示全部”）的控件引用
-        self._footer = None
+        #: 当前可见行的命中区域与记录
+        self._rows = []
+        #: “加载更多”文字区域；None 表示不可点击 / 无页脚
+        self._footer_box = None
+        self._footer_text = ""
+        #: 画布宽度与内容高度（滚动恢复用）
+        self._canvas_w = 0
+        self._content_height = 1
+
+        self._font_title = tkfont.Font(font=theme.font_bold)
+        self._font_small = tkfont.Font(font=theme.font_sm)
+
         self._build()
         self.refresh(reset_limit=True)
 
@@ -39,8 +67,10 @@ class RecordsPage(tk.Frame):
 
         header = tk.Frame(self, bg=p.bg)
         header.pack(fill="x", padx=28, pady=(22, 10))
-        tk.Label(header, text="学习记录", font=self.t.font_h1, bg=p.bg, fg=p.text).pack(side="left")
-        self.count_label = tk.Label(header, text="", font=self.t.font_sm, bg=p.bg, fg=p.muted)
+        tk.Label(header, text="学习记录", font=self.t.font_h1,
+                 bg=p.bg, fg=p.text).pack(side="left")
+        self.count_label = tk.Label(header, text="", font=self.t.font_sm,
+                                    bg=p.bg, fg=p.muted)
         self.count_label.pack(side="left", padx=12, pady=(10, 0))
 
         toolbar = tk.Frame(self, bg=p.bg)
@@ -60,20 +90,35 @@ class RecordsPage(tk.Frame):
         self.tag_combo.bind("<<ComboboxSelected>>",
                             lambda _e: self.refresh(reset_limit=True))
 
-        RoundedButton(toolbar, self.t, "＋ 补记", command=self.app.open_quick_record_dialog,
+        RoundedButton(toolbar, self.t, "＋ 补记",
+                      command=self.app.open_quick_record_dialog,
                       variant="success", height=38).pack(side="left")
 
-        self.list = ScrollableFrame(self, self.t)
-        self.list.pack(fill="both", expand=True, padx=28, pady=(0, 18))
+        # Canvas 直接绘制行，避免“Canvas 内嵌 Frame”的布局放大
+        self.list_frame = tk.Frame(self, bg=p.bg)
+        self.list_frame.pack(fill="both", expand=True, padx=28, pady=(0, 18))
+
+        self.canvas = tk.Canvas(self.list_frame, bg=p.bg,
+                                highlightthickness=0, bd=0)
+        self.scrollbar = ttk.Scrollbar(
+            self.list_frame, orient="vertical", command=self.canvas.yview)
+        self.canvas.configure(yscrollcommand=self.scrollbar.set)
+        self.canvas.pack(side="left", fill="both", expand=True)
+        self.scrollbar.pack(side="right", fill="y")
+
+        self.canvas.bind("<Configure>", self._on_configure)
+        self.canvas.bind("<Button-1>", self._on_click)
+        self.canvas.bind("<Double-Button-1>", self._on_double_click)
+        self.canvas.bind("<Motion>", self._on_motion)
+        self.canvas.bind("<MouseWheel>", self._on_wheel)
 
     # ------------------------------------------------------------ 刷新
     def refresh(self, reset_limit=False):
         """重新计算筛选结果并重绘。
 
         Args:
-            reset_limit: ``True`` 表示回到首屏（搜索、标签筛选、切换页面），
-                ``False``（默认）表示保留当前已加载条数，只原地重建行——
-                删除 / 编辑一条记录后不应把用户已翻到的位置打回首屏。
+            reset_limit: ``True`` 表示回到首屏（搜索、标签筛选、切换页面）；
+                ``False``（默认）保留当前已加载条数与滚动位置（删除/编辑）。
         """
         self._update_tag_values()
 
@@ -101,155 +146,225 @@ class RecordsPage(tk.Frame):
 
         self.count_label.configure(text=f"共 {total} 条")
 
-        # 搜索 / 切页回到顶部；删除 / 编辑保留原滚动位置
-        scroll = 0.0 if reset_limit else self._scroll_position()
-        self._render_rows()
-        self._restore_scroll(scroll)
+        top = 0.0 if reset_limit else self._scroll_top()
+        self._redraw()
+        self._restore_scroll(top)
 
-    def _render_rows(self):
-        """按当前 ``_limit`` 全量重绘记录，并在底部挂页脚。"""
+    # ------------------------------------------------------------ 绘制
+    def _redraw(self):
+        """按当前 ``_limit`` 重绘所有可见行与页脚。"""
+        canvas = self.canvas
+        canvas.delete("all")
+        self._rows = []
+        self._footer_box = None
+        self._footer_text = ""
+
+        width = self._canvas_w or canvas.winfo_width()
+        if width <= 10:
+            width = 900  # 尚未完成布局：先按默认宽度画，<Configure> 会再校正
+
         p = self.t.p
-        for widget in self.list.inner.winfo_children():
-            widget.destroy()
-        self._footer = None
-
         total = len(self.rec_filtered)
+
         if total == 0:
-            empty = tk.Label(
-                self.list.inner, text="没有匹配的记录", font=self.t.font,
-                bg=p.bg, fg=p.muted, pady=40,
-            )
-            empty.pack(fill="x")
+            canvas.create_text(width / 2, 60, text="没有匹配的记录",
+                               font=self.t.font, fill=p.muted)
+            self._content_height = 140
+            canvas.configure(scrollregion=(0, 0, width, self._content_height))
             return
 
         visible = self.rec_filtered[:self._limit]
+        y = 0
         for record in visible:
-            self._row(record)
-        self._append_footer(len(visible), total)
+            self._draw_row(record, y, width)
+            y += ROW_H + ROW_GAP
 
-    def _append_footer(self, shown, total):
-        """在列表末尾挂页脚，并记录引用以便下次只替换页脚。"""
-        if shown < total:
-            self._footer = self._footer_more(shown, total)
+        footer_y = y + 8
+        if len(visible) < total:
+            text = f"加载更多（已显示 {len(visible)} / 共 {total} 条）"
+            item = canvas.create_text(width / 2, footer_y + 10, text=text,
+                                      font=self.t.font_sm, fill=p.primary)
+            bbox = canvas.bbox(item)
+            if bbox:
+                self._footer_box = bbox
+                self._footer_text = text
         else:
-            self._footer = self._footer_done(total)
+            text = f"已显示全部 {total} 条"
+            canvas.create_text(width / 2, footer_y + 10, text=text,
+                               font=self.t.font_sm, fill=p.muted)
+            self._footer_text = text
 
-    def _footer_more(self, shown, total):
-        """还有更多时的页脚：可点击“加载更多”。"""
+        self._content_height = max(footer_y + 40, 1)
+        canvas.configure(scrollregion=(0, 0, width, self._content_height))
+
+    def _draw_row(self, record, y0, width):
+        """画一行卡片：标题、标签、副标题、时长、编辑/删除。"""
         p = self.t.p
-        footer = tk.Frame(self.list.inner, bg=p.bg)
-        footer.pack(fill="x", pady=(4, 10))
+        canvas = self.canvas
 
-        link = tk.Label(
-            footer, text=f"加载更多（已显示 {shown} / 共 {total} 条）",
-            font=self.t.font_sm, bg=p.bg, fg=p.primary, cursor="hand2", pady=8,
-        )
-        link.pack()
-        link.bind("<Button-1>", lambda _e: self._load_more())
-        link.bind("<Enter>", lambda _e: link.configure(fg=p.text))
-        link.bind("<Leave>", lambda _e: link.configure(fg=p.primary))
-        return footer
+        round_rect(canvas, 0, y0, width - 2, y0 + ROW_H, RADIUS,
+                   fill=p.surface, outline=p.border)
 
-    def _footer_done(self, total):
-        """已全部渲染时的页脚。"""
-        p = self.t.p
-        footer = tk.Frame(self.list.inner, bg=p.bg)
-        footer.pack(fill="x", pady=(4, 10))
-        tk.Label(footer, text=f"已显示全部 {total} 条", font=self.t.font_sm,
-                 bg=p.bg, fg=p.muted, pady=8).pack()
-        return footer
+        # 标签（先量宽度，给标题留空间）
+        tag_text = record.tag.strip() or "未分类"
+        tag_max = min(max(60, int(width * 0.28)), 160)
+        tag_text = self._fit(tag_text, self._font_small, tag_max - 16)
+        tag_w = self._font_small.measure(tag_text) + 16
+
+        right_reserve = 110
+        max_title_w = max(80, width - PAD * 2 - tag_w - 12 - right_reserve)
+        title = self._fit(record.title or "(未命名)",
+                          self._font_title, max_title_w)
+        canvas.create_text(PAD, y0 + 20, text=title, anchor="w",
+                           font=self.t.font_bold, fill=p.text)
+        title_w = self._font_title.measure(title)
+
+        tag_x = PAD + title_w + 10
+        round_rect(canvas, tag_x, y0 + 11, tag_x + tag_w, y0 + 29,
+                   8, fill=p.surface_alt, outline="")
+        canvas.create_text(tag_x + tag_w / 2, y0 + 20, text=tag_text,
+                           font=self.t.font_sm, fill=p.primary)
+
+        subtitle = f"{record.date}  {self._hhmm(record.start)} - {self._hhmm(record.end)}"
+        if record.note:
+            subtitle += f"  ·  {record.note}"
+        subtitle = self._fit(subtitle, self._font_small,
+                             max(80, width - PAD * 2 - 92))
+        canvas.create_text(PAD, y0 + 44, text=subtitle, anchor="w",
+                           font=self.t.font_sm, fill=p.muted)
+
+        # 时长
+        canvas.create_text(width - PAD, y0 + 20,
+                           text=self.app.fmt(record.duration_min), anchor="e",
+                           font=self.t.font_bold, fill=p.primary)
+
+        # 删除
+        delete_w = self._font_small.measure("删除")
+        delete_box = (width - PAD - delete_w - 6, y0 + 34,
+                      width - PAD + 6, y0 + 56)
+        canvas.create_text(width - PAD, y0 + 45, text="删除", anchor="e",
+                           font=self.t.font_sm, fill=p.danger)
+
+        # 编辑
+        edit_right = width - PAD - delete_w - 24
+        edit_w = self._font_small.measure("编辑")
+        edit_box = (edit_right - edit_w - 6, y0 + 34,
+                    edit_right + 6, y0 + 56)
+        canvas.create_text(edit_right, y0 + 45, text="编辑", anchor="e",
+                           font=self.t.font_sm, fill=p.muted)
+
+        self._rows.append({
+            "record": record,
+            "y0": y0,
+            "y1": y0 + ROW_H,
+            "edit": edit_box,
+            "delete": delete_box,
+        })
+
+    # ------------------------------------------------------------ 交互
+    def _on_configure(self, event):
+        if event.width <= 1:
+            return
+        if abs(event.width - self._canvas_w) > 1:
+            self._canvas_w = event.width
+            self._redraw()
+
+    def _on_click(self, event):
+        x = self.canvas.canvasx(event.x)
+        y = self.canvas.canvasy(event.y)
+
+        if self._footer_box and self._in(self._footer_box, x, y):
+            self._load_more()
+            return
+
+        for row in self._rows:
+            if row["y0"] <= y <= row["y1"]:
+                if self._in(row["edit"], x, y):
+                    self.app.open_record_dialog(record=row["record"])
+                elif self._in(row["delete"], x, y):
+                    self._delete(row["record"])
+                return
+
+    def _on_double_click(self, event):
+        x = self.canvas.canvasx(event.x)
+        y = self.canvas.canvasy(event.y)
+        for row in self._rows:
+            if row["y0"] <= y <= row["y1"]:
+                if not (self._in(row["edit"], x, y)
+                        or self._in(row["delete"], x, y)):
+                    self.app.open_record_dialog(record=row["record"])
+                return
+
+    def _on_motion(self, event):
+        x = self.canvas.canvasx(event.x)
+        y = self.canvas.canvasy(event.y)
+        over = bool(self._footer_box and self._in(self._footer_box, x, y))
+        if not over:
+            for row in self._rows:
+                if row["y0"] <= y <= row["y1"] and (
+                        self._in(row["edit"], x, y)
+                        or self._in(row["delete"], x, y)):
+                    over = True
+                    break
+        self.canvas.configure(cursor="hand2" if over else "")
+
+    def _on_wheel(self, event):
+        self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+    @staticmethod
+    def _in(box, x, y):
+        return box[0] <= x <= box[2] and box[1] <= y <= box[3]
 
     def _load_more(self):
-        """加载下一页：只追加新一页的行 + 重挂页脚，不整表重绘。"""
+        """加载下一页并保持当前滚动位置。"""
         total = len(self.rec_filtered)
         if self._limit >= total:
             return
+        top = self._scroll_top()
+        self._limit = min(total, self._limit + PAGE_SIZE)
+        self._redraw()
+        self._restore_scroll(top)
 
-        start = self._limit
-        self._limit = min(total, start + PAGE_SIZE)
-
-        if self._footer is not None:
-            self._footer.destroy()
-            self._footer = None
-
-        for record in self.rec_filtered[start:self._limit]:
-            self._row(record)
-        self._append_footer(self._limit, total)
-
-    # ------------------------------------------------------------ 滚动位置
-    def _scroll_position(self):
-        """当前垂直滚动位置（0.0 - 1.0）；读取失败按顶部处理。"""
+    # ------------------------------------------------------------ 滚动
+    def _scroll_top(self):
         try:
-            return float(self.list.canvas.yview()[0])
+            return max(0.0, float(self.canvas.canvasy(0)))
         except Exception:
             logger.debug("读取记录列表滚动位置失败", exc_info=True)
             return 0.0
 
-    def _restore_scroll(self, position):
-        """重建行之后恢复滚动位置。"""
-        if position <= 0:
-            try:
-                self.list.canvas.yview_moveto(0.0)
-            except Exception:
-                logger.debug("回到列表顶部失败", exc_info=True)
-            return
+    def _restore_scroll(self, top):
         try:
-            self.list.canvas.yview_moveto(position)
-            # scrollregion 由 <Configure> 异步更新，idle 后再校正一次避免回弹
-            self.after_idle(lambda: self._apply_scroll(position))
+            self.canvas.update_idletasks()
+            fraction = max(0.0, top) / max(1, self._content_height)
+            self.canvas.yview_moveto(fraction)
+            # scrollregion 可能异步更新，idle 后再校正一次
+            self.after_idle(lambda: self.canvas.yview_moveto(fraction))
         except Exception:
             logger.debug("恢复滚动位置失败", exc_info=True)
 
-    def _apply_scroll(self, position):
-        try:
-            self.list.canvas.yview_moveto(position)
-        except Exception:
-            logger.debug("二次校正滚动位置失败", exc_info=True)
-
+    # ------------------------------------------------------------ 工具
     def _update_tag_values(self):
         tags = ["全部标签"] + self.app.store.tags()
         self.tag_combo.configure(values=tags)
         if self.tag_var.get() not in tags:
             self.tag_var.set("全部标签")
 
-    def _row(self, record):
-        p = self.t.p
-        card = Card(self.list.inner, self.t)
-        card.pack(fill="x", pady=(0, 10))
-
-        inner = tk.Frame(card, bg=p.surface)
-        inner.pack(fill="x", padx=16, pady=12)
-
-        left = tk.Frame(inner, bg=p.surface)
-        left.pack(side="left", fill="x", expand=True)
-
-        top = tk.Frame(left, bg=p.surface)
-        top.pack(anchor="w")
-        tk.Label(top, text=record.title or "(未命名)", font=self.t.font_bold,
-                 bg=p.surface, fg=p.text).pack(side="left")
-        tk.Label(top, text=record.tag.strip() or "未分类", font=self.t.font_sm,
-                 bg=p.surface_alt, fg=p.primary, padx=8, pady=1).pack(side="left", padx=8)
-
-        subtitle = f"{record.date}  {self._hhmm(record.start)} - {self._hhmm(record.end)}"
-        if record.note:
-            subtitle += f"  ·  {record.note}"
-        tk.Label(left, text=subtitle, font=self.t.font_sm, bg=p.surface, fg=p.muted).pack(
-            anchor="w", pady=(4, 0))
-
-        right = tk.Frame(inner, bg=p.surface)
-        right.pack(side="right")
-        tk.Label(right, text=self.app.fmt(record.duration_min), font=self.t.font_bold,
-                 bg=p.surface, fg=p.primary).pack(side="left", padx=(0, 14))
-
-        edit = tk.Label(right, text="编辑", font=self.t.font_sm, bg=p.surface,
-                        fg=p.muted, cursor="hand2", padx=6)
-        edit.pack(side="left")
-        edit.bind("<Button-1>", lambda _e: self.app.open_record_dialog(record=record))
-
-        delete = tk.Label(right, text="删除", font=self.t.font_sm, bg=p.surface,
-                          fg=p.danger, cursor="hand2", padx=6)
-        delete.pack(side="left")
-        delete.bind("<Button-1>", lambda _e: self._delete(record))
+    @staticmethod
+    def _fit(text, font, max_width):
+        """按像素宽度截断文本，超出部分用省略号。"""
+        if not text or max_width <= 0:
+            return ""
+        if font.measure(text) <= max_width:
+            return text
+        low, high = 0, len(text)
+        while low < high:
+            mid = (low + high + 1) // 2
+            if font.measure(text[:mid] + "…") <= max_width:
+                low = mid
+            else:
+                high = mid - 1
+        return text[:low] + "…" if low < len(text) else text
 
     @staticmethod
     def _hhmm(text):

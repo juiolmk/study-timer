@@ -10,6 +10,7 @@ import os
 import shutil
 import tempfile
 import tkinter as tk
+import types
 import unittest
 from tkinter import messagebox
 from unittest import mock
@@ -189,33 +190,36 @@ class RecordsPaginationTest(unittest.TestCase):
 
     # ---------- 辅助 ----------
     def _rows(self):
-        return len(self.page.list.inner.winfo_children())
+        return len(self.page._rows)
 
     # ---------- 用例 ----------
     def test_initial_page_is_one_screen(self):
         self.assertEqual(self.page._limit, PAGE_SIZE)
-        self.assertEqual(self._rows(), PAGE_SIZE + 1)  # 50 行 + 页脚
+        self.assertEqual(self._rows(), PAGE_SIZE)
+        self.assertIsNotNone(self.page._footer_box)
+        self.assertIn("加载更多", self.page._footer_text)
         self.assertEqual(self.page.count_label.cget("text"), f"共 {self.TOTAL} 条")
 
-    def test_load_more_appends_without_rebuild(self):
-        first_card = self.page.list.inner.winfo_children()[0]
+    def test_load_more_extends_visible_rows(self):
         self.page._load_more()
         self.root.update()
 
         self.assertEqual(self.page._limit, PAGE_SIZE * 2)
-        self.assertTrue(first_card.winfo_exists(), "已渲染的行不应被销毁重建")
-        self.assertEqual(self._rows(), PAGE_SIZE * 2 + 1)
+        self.assertEqual(self._rows(), PAGE_SIZE * 2)
+        self.assertIsNotNone(self.page._footer_box)
 
     def test_load_more_twice_reaches_total(self):
         self.page._load_more()
         self.page._load_more()
         self.root.update()
         self.assertEqual(self.page._limit, self.TOTAL)
-        self.assertEqual(self._rows(), self.TOTAL + 1)
+        self.assertEqual(self._rows(), self.TOTAL)
+        self.assertIsNone(self.page._footer_box)
+        self.assertIn("已显示全部", self.page._footer_text)
 
         self.page._load_more()  # 已到底：不追加
         self.assertEqual(self.page._limit, self.TOTAL)
-        self.assertEqual(self._rows(), self.TOTAL + 1)
+        self.assertEqual(self._rows(), self.TOTAL)
 
     def test_delete_keeps_loaded_page(self):
         self.page._load_more()
@@ -229,7 +233,8 @@ class RecordsPaginationTest(unittest.TestCase):
 
         self.assertEqual(len(self.app.store.records), before - 1)
         self.assertEqual(self.page._limit, PAGE_SIZE * 2, "删除后不应回落到首屏")
-        self.assertEqual(self._rows(), PAGE_SIZE * 2 + 1)
+        self.assertEqual(self._rows(), PAGE_SIZE * 2)
+        self.assertEqual(self.page.count_label.cget("text"), f"共 {before - 1} 条")
 
     def test_search_resets_to_first_page(self):
         self.page._load_more()
@@ -257,7 +262,24 @@ class RecordsPaginationTest(unittest.TestCase):
         self.root.update()
         self.assertEqual(len(self.page.rec_filtered), 1)
         self.assertEqual(self.page._limit, 1)
-        self.assertEqual(self._rows(), 2)  # 1 行 + 页脚
+        self.assertEqual(self._rows(), 1)
+        self.assertIsNone(self.page._footer_box)
+        self.assertIn("已显示全部", self.page._footer_text)
+
+    def test_edit_hitbox_opens_dialog(self):
+        row = self.page._rows[0]
+        box = row["edit"]
+        calls = []
+        self.app.open_record_dialog = lambda record=None: calls.append(record)
+
+        self.page._on_click(types.SimpleNamespace(
+            x=int((box[0] + box[2]) / 2),
+            y=int((box[1] + box[3]) / 2),
+        ))
+        self.assertEqual(calls, [row["record"]])
+
+    def test_canvas_draws_items(self):
+        self.assertTrue(self.page.canvas.find_all())
 
 
 if __name__ == "__main__":
