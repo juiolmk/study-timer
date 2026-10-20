@@ -196,17 +196,22 @@ class SettingsPage(tk.Frame):
         except Exception:
             settings.focus_preset = 25
 
-        self.app.repo.save(self.app.store)
+        # 先按设置应用热键，再落盘；与 _on_hotkey_toggle 的回退行为保持一致，
+        # 避免“设置里是开启、实际没注册”的中间态被写进数据文件
         hotkey_ok = self.app.apply_hotkey_setting()
-        self.app.refresh_all()
         if settings.hotkey_enabled and not hotkey_ok:
-            # 复选框与设置一致（都视为启用），只是本次注册失败，仅提示不阻断保存
+            settings.hotkey_enabled = False
+            self.hotkey_var.set(False)
+            self.app.repo.save(self.app.store)
+            self.app.refresh_all()
             messagebox.showwarning(
                 "快捷键不可用",
-                f"{HOTKEY_TEXT} 可能已被其他程序占用，本次未能启用。\n"
-                "设置已保存，可稍后重新勾选。",
+                f"{HOTKEY_TEXT} 未能启用，已回退为关闭；可关闭占用程序后重新勾选。",
             )
             return
+
+        self.app.repo.save(self.app.store)
+        self.app.refresh_all()
         self.app.toast("设置已保存")
 
     # ------------------------------------------------------------ 数据

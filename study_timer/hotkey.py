@@ -35,9 +35,9 @@ WM_QUIT = 0x0012
 #: 应用内唯一的热键 id
 _HOTKEY_ID = 0xB001
 #: 等待后台线程注册结果的上限（秒）
-_START_TIMEOUT = 1.0
+_START_TIMEOUT = 0.8
 #: 回收后台线程的上限（秒）
-_STOP_TIMEOUT = 1.0
+_STOP_TIMEOUT = 0.5
 #: 轮询间隔建议值（毫秒），由 UI 使用
 POLL_INTERVAL_MS = 150
 
@@ -101,6 +101,8 @@ class HotkeyManager:
         self._running: bool = False
         # 后台线程用它通知主线程“注册已完成”
         self._register_event = threading.Event()
+        # 停止意图：start() 清位，stop() 置位，用于关闭“注册进行中”的竞争窗口
+        self._stop_requested = threading.Event()
         self._lock = threading.Lock()
 
     # ------------------------------------------------------------ 对外属性
@@ -121,6 +123,7 @@ class HotkeyManager:
 
         - 已在运行时直接返回 True。
         - 非 Windows 平台返回 False。
+        - 上一个后台线程尚未回收时返回 False（避免两个线程抢同一热键）。
         - 热键被占用或注册超时返回 False，且不抛异常。
         """
         with self._lock:
@@ -129,6 +132,12 @@ class HotkeyManager:
             if sys.platform != "win32":
                 return False
 
+            previous = self._thread
+            if previous is not None and previous.is_alive():
+                # 上次 stop 未能在超时内回收线程，拒绝启动，等它自然退出
+                return False
+
+            self._stop_requested.clear()
             self._register_event.clear()
             self._registered = False
             self._thread_id = 0
@@ -139,20 +148,28 @@ class HotkeyManager:
             self._running = True
             thread.start()
 
-        # 等后台线程给出注册结果（最多 1 秒）
+        # 等后台线程给出注册结果
         if not self._register_event.wait(_START_TIMEOUT):
             self.stop()
             return False
 
         with self._lock:
             registered = self._registered
+            running = self._running
         if not registered:
             self.stop()
             return False
-        return True
+        return running
 
     def stop(self) -> None:
-        """停止后台线程并注销热键；可重复调用，不会抛异常。"""
+        """停止后台线程并注销热键；可重复调用，不会抛异常。
+
+        先置位“停止意图”，让尚在注册中的线程放弃注册；再投递 WM_QUIT 唤醒
+        消息循环。join 超时则保留线程引用、如实反映 ``is_running``，交由下次
+        stop() 或线程自身的 finally 收尾，绝不在线程仍存活时假装已停止。
+        """
+        self._stop_requested.set()
+
         with self._lock:
             thread = self._thread
             thread_id = self._thread_id
@@ -163,19 +180,24 @@ class HotkeyManager:
             except Exception:
                 pass
 
+        stopped = True
         if thread is not None and thread.is_alive():
             thread.join(_STOP_TIMEOUT)
-            if thread.is_alive():
-                # 极端情况下（消息循环异常）不阻塞主线程，只放弃引用
-                thread = None
+            stopped = not thread.is_alive()
 
         with self._lock:
-            self._thread = None
-            self._thread_id = 0
-            self._registered = False
-            self._running = False
+            if stopped:
+                self._thread = None
+                self._thread_id = 0
+                self._registered = False
+                self._running = False
+            else:
+                # 线程仍未退出：保留引用以便下次重试，状态保持诚实
+                self._thread = thread
+                self._running = bool(thread is not None and thread.is_alive())
 
-        self._drain()
+        if stopped:
+            self._drain()
 
     # ------------------------------------------------------------ 主线程读取
     def poll(self) -> bool:
@@ -191,20 +213,39 @@ class HotkeyManager:
 
     # ------------------------------------------------------------ 后台线程
     def _run(self) -> None:
-        """后台线程主体：注册热键 + 消息循环（不触碰任何 Tk API）。"""
+        """后台线程主体：注册热键 + 消息循环（不触碰任何 Tk API）。
+
+        在“写线程 id → 注册热键 → 进入消息循环”这三个关键点前后检查
+        ``_stop_requested``，确保启动与停止竞争时不会残留持有热键的孤儿线程。
+        """
         registered = False
         try:
             user32 = _user32()
             with self._lock:
                 self._thread_id = int(ctypes.windll.kernel32.GetCurrentThreadId())
 
+            if self._stop_requested.is_set():
+                return  # 线程刚起来就被要求停止：不注册
+
             modifiers = MOD_CONTROL | MOD_ALT | MOD_NOREPEAT
             registered = bool(
                 user32.RegisterHotKey(None, _HOTKEY_ID, modifiers, VK_S))
             with self._lock:
                 self._registered = registered
+            # 注册结果已可见，先唤醒 start() 再判断是否需要立刻回滚
             self._register_event.set()
             if not registered:
+                return
+
+            if self._stop_requested.is_set():
+                # 已注册但停止请求已到：立即注销，避免热键被孤儿线程长期占用
+                try:
+                    user32.UnregisterHotKey(None, _HOTKEY_ID)
+                except Exception:
+                    pass
+                with self._lock:
+                    self._registered = False
+                registered = False
                 return
 
             msg = wintypes.MSG()
@@ -229,6 +270,7 @@ class HotkeyManager:
         finally:
             self._register_event.set()
             with self._lock:
+                self._registered = False
                 self._running = False
                 self._thread_id = 0
 
