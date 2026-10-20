@@ -5,12 +5,15 @@ from __future__ import annotations
 
 import csv
 import json
+import logging
 import os
 import shutil
 from datetime import datetime
 
 from .config import BACKUP_DIR, BACKUP_FILE, BACKUP_KEEP, DATA_FILE
 from .models import Store, ValidationError
+
+logger = logging.getLogger(__name__)
 
 
 class Repository:
@@ -35,7 +38,8 @@ class Repository:
                 with open(self.data_file, "r", encoding="utf-8") as fh:
                     return Store.from_dict(json.load(fh))
             except Exception:
-                pass
+                logger.warning("主数据文件读取失败，尝试回退备份：%s",
+                               self.data_file, exc_info=True)
 
         for path in self._fallback_paths():
             if not os.path.exists(path):
@@ -44,10 +48,13 @@ class Repository:
                 with open(path, "r", encoding="utf-8") as fh:
                     store = Store.from_dict(json.load(fh))
                 self.last_load_recovered = True
+                logger.warning("已从备份恢复数据：%s", path)
                 return store
             except Exception:
+                logger.warning("备份文件不可用：%s", path, exc_info=True)
                 continue
 
+        logger.warning("所有数据源均不可用，使用空数据启动")
         return Store()
 
     def _fallback_paths(self):
@@ -87,7 +94,7 @@ class Repository:
             try:
                 shutil.copy2(self.data_file, self.backup_file)
             except Exception:
-                pass
+                logger.warning("复制单份备份失败：%s", self.backup_file, exc_info=True)
             self._snapshot_backup()
 
         os.replace(tmp_path, self.data_file)
@@ -100,14 +107,14 @@ class Repository:
             shutil.copy2(self.data_file, target)
             self._prune_backups()
         except Exception:
-            pass
+            logger.warning("创建轮转备份失败（目录 %s）", self.backup_dir, exc_info=True)
 
     def _prune_backups(self) -> None:
         for path in self.list_backups()[BACKUP_KEEP:]:
             try:
                 os.remove(path)
             except Exception:
-                pass
+                logger.warning("删除旧备份失败：%s", path, exc_info=True)
 
     # ---------- 导入 / 导出 ----------
     def export(self, store: Store, path: str) -> None:

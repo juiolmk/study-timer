@@ -15,6 +15,10 @@ DATA_FILE = os.path.join(DATA_DIR, "study_data.json")
 BACKUP_FILE = os.path.join(DATA_DIR, "study_data.bak.json")
 BACKUP_DIR = os.path.join(DATA_DIR, "backups")
 
+# 日志目录：%APPDATA%/StudyTimer/logs（单文件 1MB，保留 3 份历史）
+LOG_DIR = os.path.join(DATA_DIR, "logs")
+LOG_FILE = os.path.join(LOG_DIR, "app.log")
+
 # 轮转备份保留份数
 BACKUP_KEEP = 7
 

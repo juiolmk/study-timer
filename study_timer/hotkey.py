@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import ctypes
+import logging
 import queue
 import sys
 import threading
@@ -23,6 +24,8 @@ except Exception:  # pragma: no cover - 仅非 Windows 平台可能触发
 
 #: 全局快捷键的展示文案，供 UI 引用，避免多处硬编码
 HOTKEY_TEXT = "Ctrl+Alt+S"
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------- Win32 常量
 MOD_ALT = 0x0001
@@ -178,7 +181,8 @@ class HotkeyManager:
             try:
                 _user32().PostThreadMessageW(thread_id, WM_QUIT, 0, 0)
             except Exception:
-                pass
+                # 线程可能已退出：join 会给出真实结果，这里不阻断
+                logger.warning("向热键线程投递 WM_QUIT 失败", exc_info=True)
 
         stopped = True
         if thread is not None and thread.is_alive():
@@ -242,7 +246,7 @@ class HotkeyManager:
                 try:
                     user32.UnregisterHotKey(None, _HOTKEY_ID)
                 except Exception:
-                    pass
+                    logger.warning("回滚热键注册失败", exc_info=True)
                 with self._lock:
                     self._registered = False
                 registered = False
@@ -260,11 +264,12 @@ class HotkeyManager:
             try:
                 user32.UnregisterHotKey(None, _HOTKEY_ID)
             except Exception:
-                pass
+                logger.warning("退出消息循环时注销热键失败", exc_info=True)
             with self._lock:
                 self._registered = False
         except Exception:
             # 任何 Win32 异常都降级为非启用状态
+            logger.warning("全局快捷键不可用，已降级为关闭", exc_info=True)
             with self._lock:
                 self._registered = False
         finally:

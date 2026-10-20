@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import ctypes
+import logging
 import tkinter as tk
 import uuid
 from datetime import date, datetime, timedelta
@@ -16,6 +18,7 @@ from ..config import (
     VERSION,
 )
 from ..hotkey import HOTKEY_TEXT, POLL_INTERVAL_MS, HotkeyManager
+from ..logging_setup import get_log_path, install_exception_hooks, setup_logging
 from ..models import Record
 from ..services import (
     MODE_COUNTDOWN,
@@ -26,6 +29,7 @@ from ..services import (
     TimerService,
     choose_break,
 )
+from ..single_instance import SingleInstance
 from ..storage import Repository
 from .pages.home import HomePage
 from .pages.records import RecordsPage
@@ -33,6 +37,8 @@ from .pages.settings import SettingsPage
 from .pages.stats import StatsPage
 from .theme import Theme, configure_ttk
 from .widgets import Card, RoundedButton, Segmented, SidebarButton, make_entry
+
+logger = logging.getLogger(__name__)
 
 
 class App:
@@ -50,6 +56,8 @@ class App:
 
         self._alive = True
         self._finishing = False
+        #: 高频循环（tick / hotkey poll）的异常计数，用于日志节流
+        self._loop_error_counts = {}
         self.current_key = "home"
         self._theme = Theme(self.store.settings.theme)
         # 全局快捷键挂在 App 上：主题重建（rebuild）时不重启，跨重建存活
@@ -60,6 +68,8 @@ class App:
         root.minsize(860, 580)
         root.configure(bg=self._theme.p.bg)
         root.protocol("WM_DELETE_WINDOW", self.on_close)
+        # Tk 回调内抛出的异常默认打到 stderr（打包后不可见），统一收进日志
+        root.report_callback_exception = self._report_callback_exception
 
         self.build_ui()
         self.show_page("home")
@@ -159,7 +169,7 @@ class App:
             try:
                 page.refresh()
             except Exception:
-                pass
+                logger.exception("切换页面后刷新失败：%s", key)
 
         self._update_streak_badge()
 
@@ -180,14 +190,14 @@ class App:
             try:
                 page.refresh()
             except Exception:
-                pass
+                logger.exception("刷新页面失败：%s", key)
         self._update_streak_badge()
 
     def _update_streak_badge(self):
         try:
             self.streak_mini.configure(text=f"🔥 连续 {self.stats.current_streak()} 天")
         except Exception:
-            pass
+            logger.exception("更新连续打卡徽标失败")
 
     # ------------------------------------------------------------ 计时循环
     def _tick(self):
@@ -196,8 +206,21 @@ class App:
         try:
             self._update_timer()
         except Exception:
-            pass
+            self._log_loop_error("tick", "计时循环异常")
         self.root.after(200, self._tick)
+
+    def _log_loop_error(self, key: str, message: str) -> None:
+        """高频循环里的异常：首次与每 200 次记录一次，避免刷满日志。"""
+        counts = self._loop_error_counts
+        counts[key] = counts.get(key, 0) + 1
+        count = counts[key]
+        if count == 1 or count % 200 == 0:
+            logger.exception("%s（累计 %d 次）", message, count)
+
+    def _report_callback_exception(self, exc_type, exc_value, exc_tb) -> None:
+        """Tk 回调（按钮 / 延时任务）未捕获异常的统一出口。"""
+        logger.error("Tk 回调异常：%s", exc_value,
+                     exc_info=(exc_type, exc_value, exc_tb))
 
     def _update_timer(self):
         timer = self.timer
@@ -216,7 +239,7 @@ class App:
             try:
                 self.pages["home"].update_timer_display()
             except Exception:
-                pass
+                logger.exception("刷新计时显示失败")
 
     def finish_session(self, auto: bool = False):
         timer = self.timer
@@ -306,7 +329,7 @@ class App:
             try:
                 home.set_preset(preset)
             except Exception:
-                pass
+                logger.exception("同步专注预设失败")
         self.refresh_all()
 
     @staticmethod
@@ -315,7 +338,8 @@ class App:
             import winsound
             winsound.MessageBeep(winsound.MB_ICONASTERISK)
         except Exception:
-            pass
+            # 提示音是纯装饰，失败不影响功能，仅保留调试线索
+            logger.debug("提示音播放失败", exc_info=True)
 
     # ------------------------------------------------------------ 记录弹窗
     def open_record_dialog(self, duration_seconds: float = 0, record=None, default_title: str = ""):
@@ -673,7 +697,7 @@ class App:
         try:
             self._update_timer()
         except Exception:
-            pass
+            logger.exception("重建界面后刷新计时失败")
 
     def replace_store(self, store):
         self.store = store
@@ -683,7 +707,7 @@ class App:
         try:
             self._update_timer()
         except Exception:
-            pass
+            logger.exception("导入数据后刷新计时失败")
 
     # ------------------------------------------------------------ 交互辅助
     def toast(self, message: str, duration_ms: int = 1600):
@@ -696,7 +720,7 @@ class App:
             label.place(relx=0.5, rely=1.0, anchor="s", y=-16)
             self.root.after(duration_ms, label.destroy)
         except Exception:
-            pass
+            logger.debug("提示条显示失败", exc_info=True)
 
     def _on_space(self, _event):
         widget = self.root.focus_get()
@@ -704,7 +728,7 @@ class App:
             if isinstance(widget, (tk.Entry, ttk.Entry, ttk.Combobox)):
                 return
         except Exception:
-            pass
+            logger.debug("读取焦点控件失败", exc_info=True)
         if self.current_key == "home" and "home" in getattr(self, "pages", {}):
             # 全局热键追求即时：不弹“这次学什么”，直接用当前/上次内容
             self.pages["home"].toggle(prompt=False)
@@ -729,7 +753,7 @@ class App:
             if self.hotkey.poll():
                 self._on_hotkey()
         except Exception:
-            pass
+            self._log_loop_error("hotkey", "处理全局快捷键事件失败")
         if self._alive:
             self.root.after(POLL_INTERVAL_MS, self._poll_hotkey)
 
@@ -739,6 +763,7 @@ class App:
             if self.root.grab_current() is not None:
                 return  # 有模态弹窗（如记录编辑）时忽略
         except Exception:
+            logger.exception("检查模态窗口失败")
             return
 
         home = getattr(self, "pages", {}).get("home")
@@ -767,7 +792,7 @@ class App:
         try:
             self.check_reminders()
         except Exception:
-            pass
+            logger.exception("提醒检查失败")
         if self._alive:
             self.root.after(60000, self._reminder_loop)
 
@@ -812,7 +837,7 @@ class App:
         try:
             self.hotkey.stop()
         except Exception:
-            pass
+            logger.exception("退出时停止全局快捷键失败")
         self.root.destroy()
 
     # ------------------------------------------------------------ 格式化
@@ -837,11 +862,54 @@ def _enable_dpi_awareness():
         from ctypes import windll
         windll.shcore.SetProcessDpiAwareness(1)
     except Exception:
-        pass
+        # 老系统 / 非 Windows 无此 API：继续用默认 DPI
+        logger.debug("设置 DPI 感知失败", exc_info=True)
+
+
+#: MessageBoxW 样式位
+_MB_ICONERROR = 0x00000010
+_MB_ICONINFORMATION = 0x00000040
+_MB_TOPMOST = 0x00040000
+
+
+def _show_native_message(message: str, flags: int = _MB_ICONINFORMATION) -> None:
+    """未创建 Tk 窗口时的原生提示框（打包后同样可见）。"""
+    try:
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32.MessageBoxW.argtypes = [
+            ctypes.c_void_p,    # HWND
+            ctypes.c_wchar_p,   # LPCWSTR 内容
+            ctypes.c_wchar_p,   # LPCWSTR 标题
+            ctypes.c_uint,      # UINT 样式
+        ]
+        user32.MessageBoxW.restype = ctypes.c_int
+        user32.MessageBoxW(None, message, APP_NAME, flags | _MB_TOPMOST)
+    except Exception:
+        # 非 Windows 或 user32 不可用时退回日志，保证主流程不被阻断
+        logger.warning("无法显示原生提示框：%s", message, exc_info=True)
 
 
 def run():
-    _enable_dpi_awareness()
-    root = tk.Tk()
-    App(root)
-    root.mainloop()
+    """程序入口：日志 → 异常钩子 → 单实例 → 主窗口。"""
+    setup_logging()
+    install_exception_hooks()
+    logger.info("启动 %s v%s", APP_NAME, VERSION)
+
+    guard = SingleInstance()
+    if not guard.acquire():
+        logger.warning("检测到已有实例在运行，本次启动直接退出")
+        _show_native_message("学习打卡已在运行。")
+        return
+
+    try:
+        _enable_dpi_awareness()
+        root = tk.Tk()
+        App(root)
+        root.mainloop()
+    except Exception:
+        logger.exception("应用运行失败")
+        _show_native_message("学习打卡启动失败，详情见日志：\n" + get_log_path(),
+                             flags=_MB_ICONERROR)
+    finally:
+        guard.release()
+        logger.info("应用已退出")

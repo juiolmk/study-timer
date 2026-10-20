@@ -3,14 +3,17 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import tkinter as tk
 from datetime import datetime
 from tkinter import filedialog, messagebox, ttk
 
-from ...config import DATA_DIR, VERSION
+from ...config import DATA_DIR, LOG_DIR, VERSION
 from ...hotkey import HOTKEY_TEXT
 from ..widgets import Card, RoundedButton, ScrollableFrame, Segmented, make_entry
+
+logger = logging.getLogger(__name__)
 
 
 class SettingsPage(tk.Frame):
@@ -134,9 +137,16 @@ class SettingsPage(tk.Frame):
         RoundedButton(buttons, self.t, "清空数据", command=self._clear,
                       variant="danger", height=36).pack(side="left")
         self._row(form, 0, "备份 / 恢复", buttons)
-        tk.Label(form, text="自动备份位于 backups 子目录，保留最近 7 份；CSV 可直接用 Excel 打开。",
+
+        log_buttons = tk.Frame(form, bg=p.surface)
+        RoundedButton(log_buttons, self.t, "查看日志", command=self._open_logs,
+                      variant="ghost", height=34).pack(side="left")
+        self._row(form, 1, "运行日志", log_buttons)
+
+        tk.Label(form, text="自动备份位于 backups 子目录，保留最近 7 份；CSV 可直接用 Excel 打开。"
+                            "日志位于 logs 子目录。",
                  font=self.t.font_sm, bg=p.surface, fg=p.muted).grid(
-            row=1, column=1, sticky="w", pady=(6, 0))
+            row=2, column=1, sticky="w", pady=(6, 0))
 
         # 保存
         footer = tk.Frame(self.body, bg=p.bg)
@@ -311,6 +321,15 @@ class SettingsPage(tk.Frame):
             os.startfile(DATA_DIR)
         except Exception as exc:
             messagebox.showerror("无法打开", str(exc))
+
+    def _open_logs(self):
+        """打开日志目录；目录或文件管理器不可用时提示。"""
+        try:
+            os.makedirs(LOG_DIR, exist_ok=True)
+            os.startfile(LOG_DIR)
+        except Exception as exc:
+            logger.warning("打开日志目录失败：%s", LOG_DIR, exc_info=True)
+            messagebox.showerror("无法打开日志目录", f"{exc}\n\n日志目录：{LOG_DIR}")
 
     def _clear(self):
         if not messagebox.askyesno("确认清空", "将删除全部学习记录与打卡，且不可恢复！确定？"):
