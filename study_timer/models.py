@@ -127,6 +127,7 @@ class Settings:
     focus_preset: int = DEFAULT_FOCUS
     theme: str = "light"
     hotkey_enabled: bool = True
+    ask_before_start: bool = True
     auto_break: bool = True
     short_break_min: int = DEFAULT_SHORT_BREAK
     long_break_min: int = DEFAULT_LONG_BREAK
@@ -168,6 +169,7 @@ class Settings:
             focus_preset=preset,
             theme=theme,
             hotkey_enabled=_parse_flag(data.get("hotkey_enabled"), True),
+            ask_before_start=_parse_flag(data.get("ask_before_start"), True),
             auto_break=_parse_flag(data.get("auto_break"), True),
             short_break_min=_parse_int(
                 data.get("short_break_min"), DEFAULT_SHORT_BREAK, 1, 60),

@@ -186,18 +186,26 @@ class HomePage(tk.Frame):
                 break
         self.update_timer_display()
 
-    def toggle(self):
+    def toggle(self, prompt=True):
         """开始 / 暂停 / 继续。"""
         timer = self.app.timer
         if timer.is_idle:
-            if timer.mode == MODE_COUNTDOWN:
-                # 每次从空闲启动倒计时，都视为新一轮专注
-                self.app.pomodoro_phase = PHASE_WORK
-            timer.start()
+            if prompt and self.app.store.settings.ask_before_start:
+                self.app.open_start_dialog(self._begin_start)
+                return
+            self._begin_start()
         elif timer.is_running:
             timer.pause()
         else:
             timer.resume()
+        self.update_timer_display()
+
+    def _begin_start(self):
+        timer = self.app.timer
+        if timer.mode == MODE_COUNTDOWN:
+            # 每次从空闲启动倒计时，都视为新一轮专注
+            self.app.pomodoro_phase = PHASE_WORK
+        timer.start()
         self.update_timer_display()
 
     def _finish(self):

@@ -45,6 +45,8 @@ class App:
         self.timer = TimerService()
         self.pomodoro_phase = PHASE_WORK
         self.completed_rounds = 0
+        self.session_title = ""
+        self.session_tag = ""
 
         self._alive = True
         self._finishing = False
@@ -240,7 +242,10 @@ class App:
         if auto:
             self._beep()
 
-        default_title = "番茄专注" if mode == MODE_COUNTDOWN else ""
+        if self.session_title:
+            default_title = self.session_title
+        else:
+            default_title = "番茄专注" if mode == MODE_COUNTDOWN else ""
         self.open_record_dialog(duration_seconds=seconds, default_title=default_title)
 
     def _auto_record_work(self, seconds: float):
@@ -254,8 +259,8 @@ class App:
             start=start_dt.strftime("%Y-%m-%d %H:%M"),
             end=end_dt.strftime("%Y-%m-%d %H:%M"),
             duration_min=minutes,
-            title="番茄专注",
-            tag=self.last_used_tag(),
+            title=self.session_title or "番茄专注",
+            tag=self.session_tag or self.last_used_tag(),
             note="",
         )
         self.store.records.append(record)
@@ -328,7 +333,7 @@ class App:
             date_value = now.strftime("%Y-%m-%d")
             start_value = start_day.strftime("%H:%M")
             title_value = default_title
-            tag_value = ""
+            tag_value = self.session_tag or self.last_used_tag()
             note_value = ""
 
         card = Card(win, t)
@@ -436,6 +441,77 @@ class App:
             return ""
         latest = max(self.store.records, key=lambda item: (item.date, item.start))
         return latest.tag.strip()
+
+    def last_used_title(self) -> str:
+        """最近一条记录的学习内容，用于开始前预填。"""
+        if not self.store.records:
+            return ""
+        latest = max(self.store.records, key=lambda item: (item.date, item.start))
+        return latest.title.strip()
+
+    def open_start_dialog(self, on_start):
+        """开始计时前轻量询问“这次学什么”，可跳过。"""
+        t = self._theme
+        p = t.p
+
+        win = tk.Toplevel(self.root)
+        win.title("开始专注")
+        win.configure(bg=p.bg)
+        win.geometry("430x300")
+        win.transient(self.root)
+        win.grab_set()
+        win.resizable(False, False)
+
+        card = Card(win, t)
+        card.pack(fill="both", expand=True, padx=18, pady=18)
+        body = tk.Frame(card, bg=p.surface)
+        body.pack(fill="both", expand=True, padx=20, pady=16)
+
+        tk.Label(body, text="这次学什么？", font=t.font_h2,
+                 bg=p.surface, fg=p.text).pack(anchor="w")
+        tk.Label(body, text="可跳过；结束后仍可补充",
+                 font=t.font_sm, bg=p.surface, fg=p.muted).pack(anchor="w", pady=(2, 12))
+
+        form = tk.Frame(body, bg=p.surface)
+        form.pack(fill="x")
+        form.grid_columnconfigure(1, weight=1)
+
+        def add_row(row, label, widget):
+            tk.Label(form, text=label, font=t.font_sm,
+                     bg=p.surface, fg=p.muted).grid(
+                row=row, column=0, sticky="w", pady=7, padx=(0, 14))
+            widget.grid(row=row, column=1, sticky="ew", pady=7)
+
+        title_entry = make_entry(form, t)
+        title_entry.insert(0, self.session_title or self.last_used_title())
+        add_row(0, "学习内容", title_entry)
+
+        tag_entry = ttk.Combobox(form, values=self.store.tags(), font=t.font, state="normal")
+        tag_entry.set(self.session_tag or self.last_used_tag())
+        add_row(1, "标签 / 科目", tag_entry)
+
+        def start():
+            self.session_title = title_entry.get().strip()
+            self.session_tag = tag_entry.get().strip()
+            win.destroy()
+            on_start()
+
+        def skip():
+            self.session_title = ""
+            self.session_tag = ""
+            win.destroy()
+            on_start()
+
+        buttons = tk.Frame(body, bg=p.surface)
+        buttons.pack(fill="x", pady=(16, 0))
+        RoundedButton(buttons, t, "开始专注", command=start,
+                      variant="success").pack(side="right")
+        RoundedButton(buttons, t, "跳过", command=skip,
+                      variant="ghost").pack(side="right", padx=8)
+
+        win.bind("<Return>", lambda _e: start())
+        win.bind("<Escape>", lambda _e: win.destroy())
+        win.after(60, title_entry.focus_set)
 
     def open_quick_record_dialog(self):
         """快速补记：不启动计时，用最少步骤记录刚才的学习。"""
@@ -619,7 +695,8 @@ class App:
         except Exception:
             pass
         if self.current_key == "home" and "home" in getattr(self, "pages", {}):
-            self.pages["home"].toggle()
+            # 全局热键追求即时：不弹“这次学什么”，直接用当前/上次内容
+            self.pages["home"].toggle(prompt=False)
 
     # ------------------------------------------------------------ 全局快捷键
     def apply_hotkey_setting(self) -> bool:

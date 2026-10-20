@@ -99,9 +99,11 @@ class RepositoryTest(unittest.TestCase):
 
         settings = Settings.from_dict({})
         self.assertTrue(settings.auto_break)
+        self.assertTrue(settings.ask_before_start)
         self.assertEqual(settings.short_break_min, 5)
         self.assertEqual(settings.long_break_min, 15)
         self.assertEqual(settings.rounds_per_long_break, 4)
+        self.assertFalse(Settings.from_dict({"ask_before_start": False}).ask_before_start)
 
         clamped = Settings.from_dict({
             "short_break_min": 0,
