@@ -12,6 +12,7 @@ from ..config import (
     APP_NAME,
     APP_NAME_EN,
     MIN_RECORD_SECONDS,
+    QUICK_PRESETS,
     VERSION,
 )
 from ..hotkey import HOTKEY_TEXT, POLL_INTERVAL_MS, HotkeyManager
@@ -23,7 +24,7 @@ from .pages.records import RecordsPage
 from .pages.settings import SettingsPage
 from .pages.stats import StatsPage
 from .theme import Theme, configure_ttk
-from .widgets import Card, RoundedButton, SidebarButton, make_entry
+from .widgets import Card, RoundedButton, Segmented, SidebarButton, make_entry
 
 
 class App:
@@ -31,6 +32,7 @@ class App:
         self.root = root
         self.repo = Repository()
         self.store = self.repo.load()
+        self._recovered_from_backup = self.repo.last_load_recovered
         self.stats = StatsService(self.store)
         self.timer = TimerService()
 
@@ -53,6 +55,10 @@ class App:
         root.bind("<space>", self._on_space)
         root.after(200, self._tick)
         root.after(60000, self._reminder_loop)
+
+        if self._recovered_from_backup:
+            root.after(800, lambda: self.toast(
+                "检测到数据文件异常，已从备份恢复", duration_ms=3200))
 
         # 全局快捷键：按设置启动；失败（被占用 / 非 Windows）静默降级并提示一次
         if self.store.settings.hotkey_enabled:
@@ -344,6 +350,145 @@ class App:
             side="right", padx=8)
 
         win.bind("<Escape>", lambda _e: win.destroy())
+
+    # ------------------------------------------------------------ 快速补记
+    def last_used_tag(self) -> str:
+        """最近一条记录的标签，用于快速补记预填。"""
+        if not self.store.records:
+            return ""
+        latest = max(self.store.records, key=lambda item: (item.date, item.start))
+        return latest.tag.strip()
+
+    def open_quick_record_dialog(self):
+        """快速补记：不启动计时，用最少步骤记录刚才的学习。"""
+        t = self._theme
+        p = t.p
+
+        win = tk.Toplevel(self.root)
+        win.title("快速补记")
+        win.configure(bg=p.bg)
+        win.geometry("470x540")
+        win.transient(self.root)
+        win.grab_set()
+        win.resizable(False, False)
+
+        now = datetime.now()
+        default_minutes = QUICK_PRESETS[1] if len(QUICK_PRESETS) > 1 else QUICK_PRESETS[0]
+        default_start = now - timedelta(minutes=default_minutes)
+
+        card = Card(win, t)
+        card.pack(fill="both", expand=True, padx=18, pady=18)
+        body = tk.Frame(card, bg=p.surface)
+        body.pack(fill="both", expand=True, padx=20, pady=16)
+
+        tk.Label(body, text="快速补记", font=t.font_h2,
+                 bg=p.surface, fg=p.text).pack(anchor="w")
+        tk.Label(body, text="不启动计时，直接记录刚才的学习",
+                 font=t.font_sm, bg=p.surface, fg=p.muted).pack(anchor="w", pady=(2, 12))
+
+        tk.Label(body, text="时长", font=t.font_sm,
+                 bg=p.surface, fg=p.muted).pack(anchor="w")
+        preset_row = tk.Frame(body, bg=p.surface)
+        preset_row.pack(fill="x", pady=(4, 10))
+
+        duration_var = tk.StringVar(value=str(default_minutes))
+        start_var = tk.StringVar(value=default_start.strftime("%H:%M"))
+
+        def apply_preset(index):
+            minutes = QUICK_PRESETS[index]
+            duration_var.set(str(minutes))
+            start_var.set((datetime.now() - timedelta(minutes=minutes)).strftime("%H:%M"))
+
+        presets = Segmented(
+            preset_row, t, [f"{m} 分" for m in QUICK_PRESETS], apply_preset,
+            index=QUICK_PRESETS.index(default_minutes),
+        )
+        presets.pack(side="left")
+
+        duration_entry = make_entry(preset_row, t, width=6, textvariable=duration_var)
+        tk.Label(preset_row, text="或", font=t.font_sm,
+                 bg=p.surface, fg=p.muted).pack(side="left", padx=8)
+        duration_entry.pack(side="left")
+        tk.Label(preset_row, text="分钟", font=t.font_sm,
+                 bg=p.surface, fg=p.muted).pack(side="left", padx=4)
+
+        form = tk.Frame(body, bg=p.surface)
+        form.pack(fill="x")
+        form.grid_columnconfigure(1, weight=1)
+
+        def add_row(row, label, widget):
+            tk.Label(form, text=label, font=t.font_sm,
+                     bg=p.surface, fg=p.muted).grid(
+                row=row, column=0, sticky="w", pady=6, padx=(0, 14))
+            widget.grid(row=row, column=1, sticky="ew", pady=6)
+
+        date_entry = make_entry(form, t)
+        date_entry.insert(0, now.strftime("%Y-%m-%d"))
+        add_row(0, "日期", date_entry)
+
+        start_entry = make_entry(form, t, textvariable=start_var)
+        add_row(1, "开始时间", start_entry)
+
+        title_entry = make_entry(form, t)
+        add_row(2, "学习内容", title_entry)
+
+        tag_entry = ttk.Combobox(form, values=self.store.tags(), font=t.font, state="normal")
+        tag_entry.set(self.last_used_tag())
+        add_row(3, "标签 / 科目", tag_entry)
+
+        note_entry = make_entry(form, t)
+        add_row(4, "备注", note_entry)
+
+        def save(_event=None):
+            day = date_entry.get().strip()
+            try:
+                datetime.strptime(day, "%Y-%m-%d")
+            except Exception:
+                messagebox.showerror("格式错误", "日期格式应为 YYYY-MM-DD", parent=win)
+                return
+
+            try:
+                minutes = int(duration_var.get().strip())
+                if minutes <= 0:
+                    raise ValueError
+            except Exception:
+                messagebox.showerror("格式错误", "时长须为正整数（分钟）", parent=win)
+                return
+
+            start_text = start_var.get().strip() or "00:00"
+            try:
+                start_dt = datetime.strptime(f"{day} {start_text}", "%Y-%m-%d %H:%M")
+            except Exception:
+                messagebox.showerror("格式错误", "开始时间格式应为 HH:MM", parent=win)
+                return
+
+            end_dt = start_dt + timedelta(minutes=minutes)
+            self.store.records.append(Record(
+                id=str(uuid.uuid4()),
+                date=day,
+                start=start_dt.strftime("%Y-%m-%d %H:%M"),
+                end=end_dt.strftime("%Y-%m-%d %H:%M"),
+                duration_min=minutes,
+                title=title_entry.get().strip(),
+                tag=tag_entry.get().strip(),
+                note=note_entry.get().strip(),
+            ))
+            self.store.checkins.add(day)
+            self.repo.save(self.store)
+            win.destroy()
+            self.refresh_all()
+            self.toast("已补记")
+
+        buttons = tk.Frame(body, bg=p.surface)
+        buttons.pack(fill="x", pady=(16, 0))
+        RoundedButton(buttons, t, "保存补记", command=save,
+                      variant="success").pack(side="right")
+        RoundedButton(buttons, t, "取消", command=win.destroy,
+                      variant="ghost").pack(side="right", padx=8)
+
+        win.bind("<Return>", save)
+        win.bind("<Escape>", lambda _e: win.destroy())
+        win.after(60, title_entry.focus_set)
 
     # ------------------------------------------------------------ 主题 / 数据
     def set_theme(self, name: str):

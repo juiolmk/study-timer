@@ -68,6 +68,10 @@ class HomePage(tk.Frame):
         self.btn_finish = RoundedButton(actions, self.t, "结束并保存", command=self._finish,
                                         variant="ghost")
         self.btn_finish.pack(side="left", padx=10)
+        self.btn_quick = RoundedButton(actions, self.t, "补记",
+                                       command=self.app.open_quick_record_dialog,
+                                       variant="ghost")
+        self.btn_quick.pack(side="left")
 
         right = tk.Frame(inner, bg=p.surface)
         right.pack(side="right")

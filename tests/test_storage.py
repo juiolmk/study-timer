@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """存储层单元测试（往返、迁移、容错、导入校验）。"""
 
+import csv
 import json
 import os
 import tempfile
@@ -87,6 +88,76 @@ class RepositoryTest(unittest.TestCase):
         store.settings.goal_min = 100
         self.repo.save(store)
         self.assertTrue(os.path.exists(self.backup_file))
+
+    def test_valid_load_not_marked_recovered(self):
+        self.repo.save(Store())
+        self.repo.load()
+        self.assertFalse(self.repo.last_load_recovered)
+
+    def test_csv_export(self):
+        store = Store()
+        store.records.append(Record(
+            "r1", "2026-10-20", "2026-10-20 09:00", "2026-10-20 09:45",
+            45, "线性代数", "第三章", "数学"))
+        store.records.append(Record(
+            "r2", "2026-10-19", "2026-10-19 20:00", "2026-10-19 20:25",
+            25, "英语阅读", "", "英语"))
+
+        path = os.path.join(self.directory, "out.csv")
+        self.repo.export_csv(store, path)
+
+        with open(path, "r", encoding="utf-8-sig", newline="") as fh:
+            rows = list(csv.reader(fh))
+
+        self.assertEqual(rows[0], ["日期", "开始", "结束", "时长(分钟)", "学习内容", "标签", "备注"])
+        self.assertEqual(len(rows), 3)
+        # 按日期升序：10-19 在前
+        self.assertEqual(rows[1][0], "2026-10-19")
+        self.assertEqual(rows[1][4], "英语阅读")
+        self.assertEqual(rows[2][4], "线性代数")
+        self.assertEqual(rows[2][3], "45")
+
+    def test_csv_export_empty(self):
+        path = os.path.join(self.directory, "empty.csv")
+        self.repo.export_csv(Store(), path)
+        with open(path, "r", encoding="utf-8-sig", newline="") as fh:
+            rows = list(csv.reader(fh))
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0][0], "日期")
+
+    def test_rotating_backups_keep_seven(self):
+        store = Store()
+        store.settings.goal_min = 1
+        self.repo.save(store)  # 首次保存，没有旧文件可备份
+
+        for goal in range(2, 12):
+            store.settings.goal_min = goal
+            self.repo.save(store)
+
+        backups = self.repo.list_backups()
+        self.assertEqual(len(backups), 7)
+        # 最新一份备份应是倒数第二次保存（goal=10）
+        with open(backups[0], "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        self.assertEqual(data["settings"]["goal_min"], 10)
+
+    def test_recover_from_rotating_backup(self):
+        store = Store()
+        store.settings.goal_min = 42
+        self.repo.save(store)
+
+        store.settings.goal_min = 99
+        self.repo.save(store)  # 同时生成 .bak 与轮转备份（内容为 goal=42）
+
+        # 删除单份备份，强制走轮转备份
+        if os.path.exists(self.backup_file):
+            os.remove(self.backup_file)
+        with open(self.data_file, "w", encoding="utf-8") as fh:
+            fh.write("{ broken")
+
+        loaded = self.repo.load()
+        self.assertTrue(self.repo.last_load_recovered)
+        self.assertEqual(loaded.settings.goal_min, 42)
 
 
 if __name__ == "__main__":

@@ -43,7 +43,7 @@ class RecordsPage(tk.Frame):
         self.tag_combo.pack(side="left", padx=8)
         self.tag_combo.bind("<<ComboboxSelected>>", lambda _e: self.refresh())
 
-        RoundedButton(toolbar, self.t, "＋ 新增", command=self.app.open_record_dialog,
+        RoundedButton(toolbar, self.t, "＋ 补记", command=self.app.open_quick_record_dialog,
                       variant="success", height=38).pack(side="left")
 
         self.list = ScrollableFrame(self, self.t)

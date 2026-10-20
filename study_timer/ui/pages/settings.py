@@ -90,15 +90,20 @@ class SettingsPage(tk.Frame):
         # 数据管理
         form = self._section("数据管理", "数据保存于 " + DATA_DIR)
         buttons = tk.Frame(form, bg=p.surface)
-        RoundedButton(buttons, self.t, "导出", command=self._export,
+        RoundedButton(buttons, self.t, "导出 JSON", command=self._export,
                       variant="success", height=36).pack(side="left")
-        RoundedButton(buttons, self.t, "导入", command=self._import,
+        RoundedButton(buttons, self.t, "导出 CSV", command=self._export_csv,
                       height=36).pack(side="left", padx=8)
+        RoundedButton(buttons, self.t, "导入 JSON", command=self._import,
+                      height=36).pack(side="left")
         RoundedButton(buttons, self.t, "打开文件夹", command=self._open_folder,
-                      variant="ghost", height=36).pack(side="left")
+                      variant="ghost", height=36).pack(side="left", padx=8)
         RoundedButton(buttons, self.t, "清空数据", command=self._clear,
-                      variant="danger", height=36).pack(side="left", padx=8)
+                      variant="danger", height=36).pack(side="left")
         self._row(form, 0, "备份 / 恢复", buttons)
+        tk.Label(form, text="自动备份位于 backups 子目录，保留最近 7 份；CSV 可直接用 Excel 打开。",
+                 font=self.t.font_sm, bg=p.surface, fg=p.muted).grid(
+            row=1, column=1, sticky="w", pady=(6, 0))
 
         # 保存
         footer = tk.Frame(self.body, bg=p.bg)
@@ -225,6 +230,19 @@ class SettingsPage(tk.Frame):
         try:
             self.app.repo.export(self.app.store, path)
             messagebox.showinfo("导出成功", f"数据已导出到：\n{path}")
+        except Exception as exc:
+            messagebox.showerror("导出失败", str(exc))
+
+    def _export_csv(self):
+        path = filedialog.asksaveasfilename(
+            defaultextension=".csv", filetypes=[("CSV 文件", "*.csv")],
+            initialfile="学习记录.csv",
+        )
+        if not path:
+            return
+        try:
+            self.app.repo.export_csv(self.app.store, path)
+            messagebox.showinfo("导出成功", f"CSV 已导出到：\n{path}")
         except Exception as exc:
             messagebox.showerror("导出失败", str(exc))
 
