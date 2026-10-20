@@ -94,6 +94,24 @@ class RepositoryTest(unittest.TestCase):
         self.repo.load()
         self.assertFalse(self.repo.last_load_recovered)
 
+    def test_break_settings_defaults_and_clamp(self):
+        from study_timer.models import Settings
+
+        settings = Settings.from_dict({})
+        self.assertTrue(settings.auto_break)
+        self.assertEqual(settings.short_break_min, 5)
+        self.assertEqual(settings.long_break_min, 15)
+        self.assertEqual(settings.rounds_per_long_break, 4)
+
+        clamped = Settings.from_dict({
+            "short_break_min": 0,
+            "long_break_min": 999,
+            "rounds_per_long_break": 1,
+        })
+        self.assertEqual(clamped.short_break_min, 1)
+        self.assertEqual(clamped.long_break_min, 120)
+        self.assertEqual(clamped.rounds_per_long_break, 2)
+
     def test_csv_export(self):
         store = Store()
         store.records.append(Record(

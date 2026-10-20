@@ -59,13 +59,34 @@ class SettingsPage(tk.Frame):
         self._row(form, 1, "提醒时间", time_entry)
 
         # 番茄钟
-        form = self._section("番茄钟", "首页选择预设后即进入倒计时")
+        form = self._section("番茄钟", "专注结束后按轮次自动短休 / 长休")
         self.preset_var = tk.StringVar(value=str(settings.focus_preset))
         preset = ttk.Combobox(
             form, textvariable=self.preset_var, state="readonly",
             values=["25", "45", "60"], width=6, font=self.t.font,
         )
         self._row(form, 0, "默认专注时长", preset)
+
+        self.auto_break_var = tk.BooleanVar(value=bool(settings.auto_break))
+        auto_break_check = tk.Checkbutton(
+            form, text="专注结束后自动进入休息", variable=self.auto_break_var,
+            font=self.t.font, bg=p.surface, fg=p.text,
+            activebackground=p.surface, activeforeground=p.text,
+            selectcolor=p.surface_alt, bd=0, highlightthickness=0,
+        )
+        self._row(form, 1, "自动休息", auto_break_check)
+
+        self.short_break_var = tk.StringVar(value=str(settings.short_break_min))
+        short_entry = make_entry(form, self.t, width=6, textvariable=self.short_break_var)
+        self._row(form, 2, "短休（分钟）", short_entry)
+
+        self.long_break_var = tk.StringVar(value=str(settings.long_break_min))
+        long_entry = make_entry(form, self.t, width=6, textvariable=self.long_break_var)
+        self._row(form, 3, "长休（分钟）", long_entry)
+
+        self.rounds_var = tk.StringVar(value=str(settings.rounds_per_long_break))
+        rounds_entry = make_entry(form, self.t, width=6, textvariable=self.rounds_var)
+        self._row(form, 4, "长休间隔（轮）", rounds_entry)
 
         # 外观
         form = self._section("外观", "切换后会立即应用")
@@ -200,6 +221,16 @@ class SettingsPage(tk.Frame):
             settings.focus_preset = int(self.preset_var.get())
         except Exception:
             settings.focus_preset = 25
+
+        try:
+            settings.auto_break = bool(self.auto_break_var.get())
+            settings.short_break_min = max(1, min(60, int(self.short_break_var.get().strip())))
+            settings.long_break_min = max(1, min(120, int(self.long_break_var.get().strip())))
+            settings.rounds_per_long_break = max(
+                2, min(12, int(self.rounds_var.get().strip())))
+        except Exception:
+            messagebox.showerror("格式错误", "休息时长与轮数须为正整数")
+            return
 
         # 先按设置应用热键，再落盘；与 _on_hotkey_toggle 的回退行为保持一致，
         # 避免“设置里是开启、实际没注册”的中间态被写进数据文件

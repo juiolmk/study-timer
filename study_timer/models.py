@@ -14,6 +14,9 @@ import uuid
 from .config import (
     DEFAULT_FOCUS,
     DEFAULT_GOAL,
+    DEFAULT_LONG_BREAK,
+    DEFAULT_ROUNDS_PER_LONG,
+    DEFAULT_SHORT_BREAK,
     FOCUS_PRESETS,
     SCHEMA_VERSION,
 )
@@ -46,6 +49,15 @@ def _parse_duration(value) -> int:
     if minutes <= 0:
         raise ValidationError("学习时长必须大于 0")
     return minutes
+
+
+def _parse_int(value, default: int, minimum: int, maximum: int) -> int:
+    """解析整数并夹到合理区间；非法值回退默认。"""
+    try:
+        number = int(value)
+    except Exception:
+        return default
+    return max(minimum, min(maximum, number))
 
 
 def _parse_flag(value, default: bool = True) -> bool:
@@ -115,6 +127,10 @@ class Settings:
     focus_preset: int = DEFAULT_FOCUS
     theme: str = "light"
     hotkey_enabled: bool = True
+    auto_break: bool = True
+    short_break_min: int = DEFAULT_SHORT_BREAK
+    long_break_min: int = DEFAULT_LONG_BREAK
+    rounds_per_long_break: int = DEFAULT_ROUNDS_PER_LONG
     last_remind_date: str = ""
     last_goal_date: str = ""
 
@@ -152,6 +168,13 @@ class Settings:
             focus_preset=preset,
             theme=theme,
             hotkey_enabled=_parse_flag(data.get("hotkey_enabled"), True),
+            auto_break=_parse_flag(data.get("auto_break"), True),
+            short_break_min=_parse_int(
+                data.get("short_break_min"), DEFAULT_SHORT_BREAK, 1, 60),
+            long_break_min=_parse_int(
+                data.get("long_break_min"), DEFAULT_LONG_BREAK, 1, 120),
+            rounds_per_long_break=_parse_int(
+                data.get("rounds_per_long_break"), DEFAULT_ROUNDS_PER_LONG, 2, 12),
             last_remind_date=_as_str(data.get("last_remind_date")),
             last_goal_date=_as_str(data.get("last_goal_date")),
         )

@@ -5,7 +5,7 @@ import unittest
 from datetime import date
 
 from study_timer.models import Record, Store
-from study_timer.services import StatsService, TimerService
+from study_timer.services import StatsService, TimerService, choose_break
 
 
 class FakeClock:
@@ -100,6 +100,26 @@ class TimerServiceTest(unittest.TestCase):
     def test_stopwatch_has_no_remaining(self):
         self.timer.configure("stopwatch")
         self.assertIsNone(self.timer.remaining())
+
+
+class BreakChoiceTest(unittest.TestCase):
+    def test_short_break_before_long(self):
+        for completed in (1, 2, 3):
+            phase, minutes = choose_break(completed, 4, 5, 15)
+            self.assertEqual((phase, minutes), ("short_break", 5))
+
+    def test_long_break_every_fourth(self):
+        for completed in (4, 8):
+            phase, minutes = choose_break(completed, 4, 5, 15)
+            self.assertEqual((phase, minutes), ("long_break", 15))
+
+    def test_custom_rounds(self):
+        phase, minutes = choose_break(3, 3, 10, 30)
+        self.assertEqual((phase, minutes), ("long_break", 30))
+
+    def test_zero_rounds_is_short(self):
+        phase, minutes = choose_break(0, 4, 5, 15)
+        self.assertEqual((phase, minutes), ("short_break", 5))
 
 
 if __name__ == "__main__":

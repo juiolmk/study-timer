@@ -17,7 +17,15 @@ from ..config import (
 )
 from ..hotkey import HOTKEY_TEXT, POLL_INTERVAL_MS, HotkeyManager
 from ..models import Record
-from ..services import MODE_COUNTDOWN, StatsService, TimerService
+from ..services import (
+    MODE_COUNTDOWN,
+    PHASE_LONG_BREAK,
+    PHASE_SHORT_BREAK,
+    PHASE_WORK,
+    StatsService,
+    TimerService,
+    choose_break,
+)
 from ..storage import Repository
 from .pages.home import HomePage
 from .pages.records import RecordsPage
@@ -35,6 +43,8 @@ class App:
         self._recovered_from_backup = self.repo.last_load_recovered
         self.stats = StatsService(self.store)
         self.timer = TimerService()
+        self.pomodoro_phase = PHASE_WORK
+        self.completed_rounds = 0
 
         self._alive = True
         self._finishing = False
@@ -200,13 +210,31 @@ class App:
         if not timer.is_active:
             return
 
+        phase = self.pomodoro_phase
         mode = timer.mode
         seconds = timer.stop()
         self.refresh_all()
 
+        # 休息结束：回到待开始的专注模式，不写记录
+        if phase in (PHASE_SHORT_BREAK, PHASE_LONG_BREAK):
+            self._prepare_work_mode()
+            if auto:
+                self._beep()
+                self.toast("休息结束，开始下一轮吧", duration_ms=2600)
+            else:
+                self.toast("已结束休息")
+            return
+
         if seconds < MIN_RECORD_SECONDS:
             if not auto:
                 self.toast("时长太短，未记录")
+            return
+
+        settings = self.store.settings
+        if auto and mode == MODE_COUNTDOWN and settings.auto_break:
+            self._auto_record_work(seconds)
+            self.completed_rounds += 1
+            self._start_break()
             return
 
         if auto:
@@ -214,6 +242,56 @@ class App:
 
         default_title = "番茄专注" if mode == MODE_COUNTDOWN else ""
         self.open_record_dialog(duration_seconds=seconds, default_title=default_title)
+
+    def _auto_record_work(self, seconds: float):
+        """番茄钟完成时自动落一条默认记录，避免休息打断记录流程。"""
+        minutes = max(1, int(round(seconds / 60)))
+        end_dt = datetime.now()
+        start_dt = end_dt - timedelta(seconds=seconds)
+        record = Record(
+            id=str(uuid.uuid4()),
+            date=end_dt.strftime("%Y-%m-%d"),
+            start=start_dt.strftime("%Y-%m-%d %H:%M"),
+            end=end_dt.strftime("%Y-%m-%d %H:%M"),
+            duration_min=minutes,
+            title="番茄专注",
+            tag=self.last_used_tag(),
+            note="",
+        )
+        self.store.records.append(record)
+        self.store.checkins.add(record.date)
+        self.repo.save(self.store)
+        self.refresh_all()
+
+    def _start_break(self):
+        """按已完成轮数自动开始短休或长休。"""
+        settings = self.store.settings
+        phase, minutes = choose_break(
+            self.completed_rounds,
+            settings.rounds_per_long_break,
+            settings.short_break_min,
+            settings.long_break_min,
+        )
+        self.pomodoro_phase = phase
+        self.timer.configure(MODE_COUNTDOWN, minutes)
+        self.timer.start()
+        self.refresh_all()
+        self._beep()
+        label = "长休" if phase == PHASE_LONG_BREAK else "短休"
+        self.toast(f"本轮已记录，开始 {minutes} 分钟{label}", duration_ms=2800)
+
+    def _prepare_work_mode(self):
+        """休息结束后回到默认专注时长，等待用户开始下一轮。"""
+        self.pomodoro_phase = PHASE_WORK
+        preset = max(1, int(self.store.settings.focus_preset))
+        self.timer.configure(MODE_COUNTDOWN, preset)
+        home = getattr(self, "pages", {}).get("home")
+        if home is not None and hasattr(home, "set_preset"):
+            try:
+                home.set_preset(preset)
+            except Exception:
+                pass
+        self.refresh_all()
 
     @staticmethod
     def _beep():

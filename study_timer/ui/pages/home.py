@@ -7,7 +7,13 @@ import tkinter as tk
 from datetime import date
 
 from ...config import WEEKDAY_CN
-from ...services import MODE_COUNTDOWN, MODE_STOPWATCH
+from ...services import (
+    MODE_COUNTDOWN,
+    MODE_STOPWATCH,
+    PHASE_LONG_BREAK,
+    PHASE_SHORT_BREAK,
+    PHASE_WORK,
+)
 from ..widgets import Card, RingProgress, RoundedButton, Segmented
 
 
@@ -171,10 +177,22 @@ class HomePage(tk.Frame):
             self.app.timer.configure(MODE_STOPWATCH)
         self.update_timer_display()
 
+    def set_preset(self, minutes):
+        """外部（如休息结束）同步分段控件到指定专注时长。"""
+        for index, (mode, value) in enumerate(self.MODES):
+            if mode == MODE_COUNTDOWN and value == minutes:
+                self._mode_index = index
+                self.segmented.select(index, notify=False)
+                break
+        self.update_timer_display()
+
     def toggle(self):
         """开始 / 暂停 / 继续。"""
         timer = self.app.timer
         if timer.is_idle:
+            if timer.mode == MODE_COUNTDOWN:
+                # 每次从空闲启动倒计时，都视为新一轮专注
+                self.app.pomodoro_phase = PHASE_WORK
             timer.start()
         elif timer.is_running:
             timer.pause()
@@ -191,17 +209,28 @@ class HomePage(tk.Frame):
         today = date.today()
         today_min = self.app.stats.minutes_on(today.isoformat())
         goal = max(1, self.app.store.settings.goal_min)
+        phase = getattr(self.app, "pomodoro_phase", PHASE_WORK)
+        is_break = phase in (PHASE_SHORT_BREAK, PHASE_LONG_BREAK)
 
         if timer.mode == MODE_COUNTDOWN:
             remaining = timer.remaining() or 0
             self.time_label.configure(text=self.app.fmt_clock(remaining))
             ratio = (timer.elapsed() / timer.target) if timer.target else 0
-            self.ring.set(
-                ratio,
-                f"{int(min(1.0, ratio) * 100)}%",
-                "本次专注",
-                p.success if ratio >= 1 else p.primary,
-            )
+            if is_break:
+                label = "长休" if phase == PHASE_LONG_BREAK else "短休"
+                self.ring.set(
+                    ratio,
+                    f"{int(min(1.0, ratio) * 100)}%",
+                    label,
+                    p.warning,
+                )
+            else:
+                self.ring.set(
+                    ratio,
+                    f"{int(min(1.0, ratio) * 100)}%",
+                    "本次专注",
+                    p.success if ratio >= 1 else p.primary,
+                )
         else:
             self.time_label.configure(text=self.app.fmt_clock(timer.elapsed()))
             ratio = today_min / goal
@@ -213,7 +242,11 @@ class HomePage(tk.Frame):
             )
 
         if timer.is_running:
-            self.status_label.configure(text="专注中", fg=p.success)
+            if is_break:
+                text = "长休中" if phase == PHASE_LONG_BREAK else "短休中"
+                self.status_label.configure(text=text, fg=p.warning)
+            else:
+                self.status_label.configure(text="专注中", fg=p.success)
             self.btn_toggle.set_text("暂停")
         elif timer.is_paused:
             self.status_label.configure(text="已暂停", fg=p.warning)
@@ -223,4 +256,5 @@ class HomePage(tk.Frame):
                 text="准备开始" if timer.mode == MODE_COUNTDOWN else "未开始", fg=p.muted)
             self.btn_toggle.set_text("开始学习")
 
+        self.btn_finish.set_text("结束休息" if is_break else "结束并保存")
         self.btn_finish.set_enabled(timer.is_active)

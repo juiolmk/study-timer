@@ -14,6 +14,22 @@ from .models import Store
 MODE_STOPWATCH = "stopwatch"
 MODE_COUNTDOWN = "countdown"
 
+PHASE_WORK = "work"
+PHASE_SHORT_BREAK = "short_break"
+PHASE_LONG_BREAK = "long_break"
+
+
+def choose_break(completed_rounds: int, rounds_per_long: int,
+                 short_min: int, long_min: int):
+    """根据已完成轮数选择休息类型与分钟数。
+
+    第 1..n-1 轮为短休，第 n 轮（n = rounds_per_long）为长休，循环往复。
+    """
+    rounds_per_long = max(1, int(rounds_per_long))
+    if completed_rounds > 0 and completed_rounds % rounds_per_long == 0:
+        return PHASE_LONG_BREAK, int(long_min)
+    return PHASE_SHORT_BREAK, int(short_min)
+
 
 class TimerService:
     """秒表 / 倒计时。
