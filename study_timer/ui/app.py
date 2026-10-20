@@ -167,7 +167,11 @@ class App:
         page = self.pages[key]
         if hasattr(page, "refresh"):
             try:
-                page.refresh()
+                # 切页时记录页回到首屏（打开要快）；其余页面无参数刷新
+                if isinstance(page, RecordsPage):
+                    page.refresh(reset_limit=True)
+                else:
+                    page.refresh()
             except Exception:
                 logger.exception("切换页面后刷新失败：%s", key)
 
@@ -772,7 +776,8 @@ class App:
 
         was_idle = self.timer.is_idle
         was_running = self.timer.is_running
-        home.toggle()
+        # 热键语义是“即时开始”：不弹“这次学什么”，与 _on_space 保持一致
+        home.toggle(prompt=False)
 
         if was_idle:
             self.toast("已开始专注")

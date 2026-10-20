@@ -7,10 +7,13 @@
 
 from __future__ import annotations
 
+import logging
 import tkinter as tk
 from tkinter import messagebox, ttk
 
 from ..widgets import Card, RoundedButton, ScrollableFrame, make_entry
+
+logger = logging.getLogger(__name__)
 
 #: 每次（首屏）最多渲染的记录条数
 PAGE_SIZE = 50
@@ -25,8 +28,10 @@ class RecordsPage(tk.Frame):
         self.rec_filtered = []
         #: 已渲染上限；必须先于首次 refresh() 初始化
         self._limit = PAGE_SIZE
+        #: 底部页脚（“加载更多”/“已显示全部”）的控件引用
+        self._footer = None
         self._build()
-        self.refresh()
+        self.refresh(reset_limit=True)
 
     # ------------------------------------------------------------ 构建
     def _build(self):
@@ -44,7 +49,7 @@ class RecordsPage(tk.Frame):
         self.search_var = tk.StringVar()
         search = make_entry(toolbar, self.t, textvariable=self.search_var)
         search.pack(side="left", fill="x", expand=True)
-        search.bind("<KeyRelease>", lambda _e: self.refresh())
+        search.bind("<KeyRelease>", lambda _e: self.refresh(reset_limit=True))
 
         self.tag_var = tk.StringVar(value="全部标签")
         self.tag_combo = ttk.Combobox(
@@ -52,7 +57,8 @@ class RecordsPage(tk.Frame):
             font=self.t.font, width=12,
         )
         self.tag_combo.pack(side="left", padx=8)
-        self.tag_combo.bind("<<ComboboxSelected>>", lambda _e: self.refresh())
+        self.tag_combo.bind("<<ComboboxSelected>>",
+                            lambda _e: self.refresh(reset_limit=True))
 
         RoundedButton(toolbar, self.t, "＋ 补记", command=self.app.open_quick_record_dialog,
                       variant="success", height=38).pack(side="left")
@@ -61,8 +67,14 @@ class RecordsPage(tk.Frame):
         self.list.pack(fill="both", expand=True, padx=28, pady=(0, 18))
 
     # ------------------------------------------------------------ 刷新
-    def refresh(self):
-        """重新计算筛选结果并回到第一页（懒加载起点）。"""
+    def refresh(self, reset_limit=False):
+        """重新计算筛选结果并重绘。
+
+        Args:
+            reset_limit: ``True`` 表示回到首屏（搜索、标签筛选、切换页面），
+                ``False``（默认）表示保留当前已加载条数，只原地重建行——
+                删除 / 编辑一条记录后不应把用户已翻到的位置打回首屏。
+        """
         self._update_tag_values()
 
         keyword = self.search_var.get().strip().lower()
@@ -79,17 +91,27 @@ class RecordsPage(tk.Frame):
             records = [r for r in records if (r.tag.strip() or "未分类") == tag]
 
         self.rec_filtered = records
-        # 条件变化 / 数据变化后回到首屏，避免一次渲染过多控件
-        self._limit = PAGE_SIZE
+        total = len(records)
 
-        self.count_label.configure(text=f"共 {len(records)} 条")
+        if reset_limit or total == 0:
+            self._limit = PAGE_SIZE
+        else:
+            # 至少一页、至多全部：数据变少时不留下空页
+            self._limit = min(max(self._limit, PAGE_SIZE), total)
+
+        self.count_label.configure(text=f"共 {total} 条")
+
+        # 搜索 / 切页回到顶部；删除 / 编辑保留原滚动位置
+        scroll = 0.0 if reset_limit else self._scroll_position()
         self._render_rows()
+        self._restore_scroll(scroll)
 
     def _render_rows(self):
-        """按当前 ``_limit`` 渲染记录，并在底部挂页脚。"""
+        """按当前 ``_limit`` 全量重绘记录，并在底部挂页脚。"""
         p = self.t.p
         for widget in self.list.inner.winfo_children():
             widget.destroy()
+        self._footer = None
 
         total = len(self.rec_filtered)
         if total == 0:
@@ -100,15 +122,17 @@ class RecordsPage(tk.Frame):
             empty.pack(fill="x")
             return
 
-        visible = self.rec_filtered[:max(PAGE_SIZE, self._limit)]
+        visible = self.rec_filtered[:self._limit]
         for record in visible:
             self._row(record)
+        self._append_footer(len(visible), total)
 
-        shown = len(visible)
+    def _append_footer(self, shown, total):
+        """在列表末尾挂页脚，并记录引用以便下次只替换页脚。"""
         if shown < total:
-            self._footer_more(shown, total)
+            self._footer = self._footer_more(shown, total)
         else:
-            self._footer_done(total)
+            self._footer = self._footer_done(total)
 
     def _footer_more(self, shown, total):
         """还有更多时的页脚：可点击“加载更多”。"""
@@ -124,6 +148,7 @@ class RecordsPage(tk.Frame):
         link.bind("<Button-1>", lambda _e: self._load_more())
         link.bind("<Enter>", lambda _e: link.configure(fg=p.text))
         link.bind("<Leave>", lambda _e: link.configure(fg=p.primary))
+        return footer
 
     def _footer_done(self, total):
         """已全部渲染时的页脚。"""
@@ -132,13 +157,54 @@ class RecordsPage(tk.Frame):
         footer.pack(fill="x", pady=(4, 10))
         tk.Label(footer, text=f"已显示全部 {total} 条", font=self.t.font_sm,
                  bg=p.bg, fg=p.muted, pady=8).pack()
+        return footer
 
     def _load_more(self):
-        """加载下一页（追加 PAGE_SIZE 条后重绘）。"""
-        if self._limit >= len(self.rec_filtered):
+        """加载下一页：只追加新一页的行 + 重挂页脚，不整表重绘。"""
+        total = len(self.rec_filtered)
+        if self._limit >= total:
             return
-        self._limit += PAGE_SIZE
-        self._render_rows()
+
+        start = self._limit
+        self._limit = min(total, start + PAGE_SIZE)
+
+        if self._footer is not None:
+            self._footer.destroy()
+            self._footer = None
+
+        for record in self.rec_filtered[start:self._limit]:
+            self._row(record)
+        self._append_footer(self._limit, total)
+
+    # ------------------------------------------------------------ 滚动位置
+    def _scroll_position(self):
+        """当前垂直滚动位置（0.0 - 1.0）；读取失败按顶部处理。"""
+        try:
+            return float(self.list.canvas.yview()[0])
+        except Exception:
+            logger.debug("读取记录列表滚动位置失败", exc_info=True)
+            return 0.0
+
+    def _restore_scroll(self, position):
+        """重建行之后恢复滚动位置。"""
+        if position <= 0:
+            try:
+                self.list.canvas.yview_moveto(0.0)
+            except Exception:
+                logger.debug("回到列表顶部失败", exc_info=True)
+            return
+        try:
+            self.list.canvas.yview_moveto(position)
+            # scrollregion 由 <Configure> 异步更新，idle 后再校正一次避免回弹
+            self.after_idle(lambda: self._apply_scroll(position))
+        except Exception:
+            logger.debug("恢复滚动位置失败", exc_info=True)
+
+    def _apply_scroll(self, position):
+        try:
+            self.list.canvas.yview_moveto(position)
+        except Exception:
+            logger.debug("二次校正滚动位置失败", exc_info=True)
 
     def _update_tag_values(self):
         tags = ["全部标签"] + self.app.store.tags()
