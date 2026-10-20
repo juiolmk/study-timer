@@ -164,12 +164,23 @@ class App:
         self._update_streak_badge()
 
     def refresh_all(self):
-        for page in self.pages.values():
-            if hasattr(page, "refresh"):
-                try:
-                    page.refresh()
-                except Exception:
-                    pass
+        """刷新当前可见的页面（首页 + 当前页），不碰隐藏页。
+
+        隐藏页在 ``show_page`` 切过去时本来就会 refresh，全量刷新只会
+        让“保存一条记录”这类高频操作付出 N 倍的 UI 重建成本。
+        """
+        keys = ["home"]
+        if self.current_key != "home":
+            keys.append(self.current_key)
+
+        for key in keys:
+            page = self.pages.get(key)
+            if page is None or not hasattr(page, "refresh"):
+                continue
+            try:
+                page.refresh()
+            except Exception:
+                pass
         self._update_streak_badge()
 
     def _update_streak_badge(self):
