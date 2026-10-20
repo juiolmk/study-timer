@@ -14,6 +14,7 @@ from ..config import (
     MIN_RECORD_SECONDS,
     VERSION,
 )
+from ..hotkey import HOTKEY_TEXT, POLL_INTERVAL_MS, HotkeyManager
 from ..models import Record
 from ..services import MODE_COUNTDOWN, StatsService, TimerService
 from ..storage import Repository
@@ -37,6 +38,8 @@ class App:
         self._finishing = False
         self.current_key = "home"
         self._theme = Theme(self.store.settings.theme)
+        # 全局快捷键挂在 App 上：主题重建（rebuild）时不重启，跨重建存活
+        self.hotkey = HotkeyManager()
 
         root.title(f"{APP_NAME} · {VERSION}")
         root.geometry("980x660")
@@ -50,6 +53,12 @@ class App:
         root.bind("<space>", self._on_space)
         root.after(200, self._tick)
         root.after(60000, self._reminder_loop)
+
+        # 全局快捷键：按设置启动；失败（被占用 / 非 Windows）静默降级并提示一次
+        if self.store.settings.hotkey_enabled:
+            if not self.hotkey.start():
+                root.after(600, self._notify_hotkey_unavailable)
+        root.after(POLL_INTERVAL_MS, self._poll_hotkey)
 
     # ------------------------------------------------------------ 布局
     def build_ui(self):
@@ -389,6 +398,59 @@ class App:
         if self.current_key == "home" and "home" in getattr(self, "pages", {}):
             self.pages["home"].toggle()
 
+    # ------------------------------------------------------------ 全局快捷键
+    def apply_hotkey_setting(self) -> bool:
+        """按设置启动 / 停止全局快捷键，返回目标状态是否达成。
+
+        - 设置为启用：尝试注册热键，成功返回 True，被占用返回 False。
+        - 设置为关闭：注销热键并返回 True（关闭这一目标已完成）。
+        """
+        if self.store.settings.hotkey_enabled:
+            return self.hotkey.start()
+        self.hotkey.stop()
+        return True
+
+    def _poll_hotkey(self):
+        """Tk 主线程轮询热键事件（后台线程只写队列，不直接碰 Tk）。"""
+        if not self._alive:
+            return
+        try:
+            if self.hotkey.poll():
+                self._on_hotkey()
+        except Exception:
+            pass
+        if self._alive:
+            self.root.after(POLL_INTERVAL_MS, self._poll_hotkey)
+
+    def _on_hotkey(self):
+        """热键命中：切换计时状态并给出轻提示（不弹窗、不强制切页）。"""
+        try:
+            if self.root.grab_current() is not None:
+                return  # 有模态弹窗（如记录编辑）时忽略
+        except Exception:
+            return
+
+        home = getattr(self, "pages", {}).get("home")
+        if home is None:
+            return
+
+        was_idle = self.timer.is_idle
+        was_running = self.timer.is_running
+        home.toggle()
+
+        if was_idle:
+            self.toast("已开始专注")
+        elif was_running:
+            self.toast("已暂停")
+        else:
+            self.toast("继续专注")
+
+    def _notify_hotkey_unavailable(self):
+        """热键不可用时的一次性提示（延迟执行，避免遮挡首屏）。"""
+        if not self._alive:
+            return
+        self.toast(f"全局快捷键 {HOTKEY_TEXT} 不可用（可能被占用）", duration_ms=2600)
+
     # ------------------------------------------------------------ 提醒
     def _reminder_loop(self):
         try:
@@ -436,6 +498,10 @@ class App:
             if not close:
                 return
         self._alive = False
+        try:
+            self.hotkey.stop()
+        except Exception:
+            pass
         self.root.destroy()
 
     # ------------------------------------------------------------ 格式化

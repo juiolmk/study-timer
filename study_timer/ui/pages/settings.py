@@ -9,6 +9,7 @@ from datetime import datetime
 from tkinter import filedialog, messagebox, ttk
 
 from ...config import DATA_DIR, VERSION
+from ...hotkey import HOTKEY_TEXT
 from ..widgets import Card, RoundedButton, ScrollableFrame, Segmented, make_entry
 
 
@@ -74,6 +75,18 @@ class SettingsPage(tk.Frame):
         )
         self._row(form, 0, "主题", self.theme_seg)
 
+        # 快捷键
+        form = self._section("快捷键", "在任意窗口开始 / 暂停计时")
+        self.hotkey_var = tk.BooleanVar(value=bool(settings.hotkey_enabled))
+        hotkey_check = tk.Checkbutton(
+            form, text=f"启用全局快捷键 {HOTKEY_TEXT}", variable=self.hotkey_var,
+            command=self._on_hotkey_toggle,
+            font=self.t.font, bg=p.surface, fg=p.text,
+            activebackground=p.surface, activeforeground=p.text,
+            selectcolor=p.surface_alt, bd=0, highlightthickness=0,
+        )
+        self._row(form, 0, "全局快捷键", hotkey_check)
+
         # 数据管理
         form = self._section("数据管理", "数据保存于 " + DATA_DIR)
         buttons = tk.Frame(form, bg=p.surface)
@@ -96,7 +109,8 @@ class SettingsPage(tk.Frame):
 
         tip = tk.Label(
             self.body,
-            text="提示：空格键可快速开始 / 暂停计时；记录支持自定义标签（科目）。",
+            text=("提示：空格键在应用内开始 / 暂停计时；"
+                  f"全局快捷键 {HOTKEY_TEXT} 在任意窗口可用。"),
             font=self.t.font_sm, bg=p.bg, fg=p.muted, justify="left",
         )
         tip.pack(anchor="w", padx=28, pady=(0, 24))
@@ -129,6 +143,32 @@ class SettingsPage(tk.Frame):
     def _on_theme(self, index):
         self.app.set_theme("dark" if index == 1 else "light")
 
+    # ------------------------------------------------------------ 快捷键
+    def _on_hotkey_toggle(self):
+        """勾选 / 取消勾选后立即生效；注册失败则回退。"""
+        want = bool(self.hotkey_var.get())
+        settings = self.app.store.settings
+        settings.hotkey_enabled = want
+
+        ok = self.app.apply_hotkey_setting()
+        if want and not ok:
+            # 被其他程序占用：回退设置与复选框，保持界面与真实状态一致
+            settings.hotkey_enabled = False
+            self.hotkey_var.set(False)
+            try:
+                self.app.repo.save(self.app.store)
+            except Exception:
+                pass
+            messagebox.showwarning(
+                "快捷键不可用",
+                f"{HOTKEY_TEXT} 可能已被其他程序占用，未能启用。\n"
+                "可关闭占用该快捷键的程序后重试。",
+            )
+            return
+
+        self.app.repo.save(self.app.store)
+        self.app.toast(f"已启用全局快捷键 {HOTKEY_TEXT}" if want else "已关闭全局快捷键")
+
     # ------------------------------------------------------------ 保存
     def _save(self):
         try:
@@ -150,13 +190,23 @@ class SettingsPage(tk.Frame):
         settings.goal_min = goal
         settings.remind = bool(self.remind_var.get())
         settings.remind_time = remind_time
+        settings.hotkey_enabled = bool(self.hotkey_var.get())
         try:
             settings.focus_preset = int(self.preset_var.get())
         except Exception:
             settings.focus_preset = 25
 
         self.app.repo.save(self.app.store)
+        hotkey_ok = self.app.apply_hotkey_setting()
         self.app.refresh_all()
+        if settings.hotkey_enabled and not hotkey_ok:
+            # 复选框与设置一致（都视为启用），只是本次注册失败，仅提示不阻断保存
+            messagebox.showwarning(
+                "快捷键不可用",
+                f"{HOTKEY_TEXT} 可能已被其他程序占用，本次未能启用。\n"
+                "设置已保存，可稍后重新勾选。",
+            )
+            return
         self.app.toast("设置已保存")
 
     # ------------------------------------------------------------ 数据

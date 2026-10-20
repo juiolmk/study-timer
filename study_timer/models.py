@@ -48,6 +48,20 @@ def _parse_duration(value) -> int:
     return minutes
 
 
+def _parse_flag(value, default: bool = True) -> bool:
+    """解析布尔开关：缺失时用默认值，兼容 JSON 布尔与常见字符串写法。"""
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    text = _as_str(value).strip().lower()
+    if not text:
+        return default
+    return text not in ("0", "false", "no", "off")
+
+
 @dataclass
 class Record:
     """一条学习记录。"""
@@ -100,6 +114,7 @@ class Settings:
     remind_time: str = "21:00"
     focus_preset: int = DEFAULT_FOCUS
     theme: str = "light"
+    hotkey_enabled: bool = True
     last_remind_date: str = ""
     last_goal_date: str = ""
 
@@ -136,6 +151,7 @@ class Settings:
             remind_time=remind_time,
             focus_preset=preset,
             theme=theme,
+            hotkey_enabled=_parse_flag(data.get("hotkey_enabled"), True),
             last_remind_date=_as_str(data.get("last_remind_date")),
             last_goal_date=_as_str(data.get("last_goal_date")),
         )
