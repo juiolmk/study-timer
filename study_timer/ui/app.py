@@ -13,7 +13,6 @@ from tkinter import messagebox, ttk
 
 from ..config import (
     APP_NAME,
-    APP_NAME_EN,
     MIN_RECORD_SECONDS,
     QUICK_PRESETS,
     VERSION,
@@ -38,7 +37,7 @@ from .pages.records import RecordsPage
 from .pages.settings import SettingsPage
 from .pages.stats import StatsPage
 from .theme import Theme, configure_ttk
-from .widgets import Card, RoundedButton, Segmented, SidebarButton, make_entry
+from .widgets import Card, RoundedButton, Segmented, TopNavButton, make_entry
 
 logger = logging.getLogger(__name__)
 
@@ -66,8 +65,8 @@ class App:
         self.hotkey = HotkeyManager()
 
         root.title(f"{APP_NAME} · {VERSION}")
-        root.geometry("980x660")
-        root.minsize(860, 580)
+        root.geometry("1120x720")
+        root.minsize(960, 620)
         root.configure(bg=self._theme.p.bg)
         self._apply_window_icon()
         root.protocol("WM_DELETE_WINDOW", self.on_close)
@@ -107,18 +106,18 @@ class App:
 
     # ------------------------------------------------------------ 布局
     def build_ui(self):
-        self._theme = Theme(self.store.settings.theme)
+        self._theme = Theme(self.store.settings.theme, self.store.settings.accent)
         configure_ttk(self.root, self._theme.p)
         p = self._theme.p
         self.root.configure(bg=p.bg)
 
-        self.sidebar = tk.Frame(self.root, bg=p.surface, width=192)
-        self.sidebar.pack(side="left", fill="y")
-        self.sidebar.pack_propagate(False)
-        self._build_sidebar()
+        self.topbar = tk.Frame(self.root, bg=p.surface)
+        self.topbar.pack(fill="x")
+        self._build_topbar()
+        tk.Frame(self.root, bg=p.border, height=1).pack(fill="x")
 
         self.content = tk.Frame(self.root, bg=p.bg)
-        self.content.pack(side="left", fill="both", expand=True)
+        self.content.pack(fill="both", expand=True)
 
         self.pages = {
             "home": HomePage(self.content, self, self._theme),
@@ -127,44 +126,52 @@ class App:
             "settings": SettingsPage(self.content, self, self._theme),
         }
 
-    def _build_sidebar(self):
+    def _build_topbar(self):
         p = self._theme.p
 
-        brand = tk.Frame(self.sidebar, bg=p.surface)
-        brand.pack(fill="x", padx=18, pady=(22, 18))
-        tk.Label(brand, text="📚", font=("Segoe UI Emoji", 20),
+        bar = tk.Frame(self.topbar, bg=p.surface)
+        bar.pack(fill="x", padx=28, pady=10)
+
+        brand = tk.Frame(bar, bg=p.surface)
+        brand.pack(side="left")
+        tk.Label(brand, text="📚", font=("Segoe UI Emoji", 16),
                  bg=p.surface, fg=p.text).pack(side="left")
+        tk.Label(brand, text=APP_NAME, font=self._theme.font_h2,
+                 bg=p.surface, fg=p.text).pack(side="left", padx=(6, 0))
+        tk.Label(brand, text="STUDY TIMER", font=self._theme.font_sm,
+                 bg=p.surface, fg=p.muted).pack(side="left", padx=(8, 0), pady=(3, 0))
 
-        brand_text = tk.Frame(brand, bg=p.surface)
-        brand_text.pack(side="left", padx=8)
-        tk.Label(brand_text, text=APP_NAME, font=self._theme.font_h2,
-                 bg=p.surface, fg=p.text).pack(anchor="w")
-        tk.Label(brand_text, text=APP_NAME_EN, font=self._theme.font_sm,
-                 bg=p.surface, fg=p.muted).pack(anchor="w")
-
-        nav = tk.Frame(self.sidebar, bg=p.surface)
-        nav.pack(fill="x")
+        nav = tk.Frame(bar, bg=p.surface)
+        nav.pack(side="left", padx=40)
 
         self.nav_buttons = {}
         items = [
-            ("home", "🏠  首页"),
-            ("records", "🗂  记录"),
-            ("stats", "📊  统计"),
-            ("settings", "⚙  设置"),
+            ("home", "首页"),
+            ("records", "记录"),
+            ("stats", "统计"),
+            ("settings", "设置"),
         ]
         for key, text in items:
-            button = SidebarButton(nav, self._theme, text,
-                                   lambda k=key: self.show_page(k))
-            button.pack(fill="x", padx=10, pady=2)
+            button = TopNavButton(nav, self._theme, text,
+                                  lambda k=key: self.show_page(k))
+            button.pack(side="left", padx=2)
             self.nav_buttons[key] = button
 
-        bottom = tk.Frame(self.sidebar, bg=p.surface)
-        bottom.pack(side="bottom", fill="x", padx=18, pady=18)
-        self.streak_mini = tk.Label(bottom, text="", font=self._theme.font_sm,
+        right = tk.Frame(bar, bg=p.surface)
+        right.pack(side="right")
+        self.streak_mini = tk.Label(right, text="", font=self._theme.font_sm,
                                     bg=p.surface, fg=p.muted)
-        self.streak_mini.pack(anchor="w")
-        tk.Label(bottom, text=f"v{VERSION}", font=self._theme.font_sm,
-                 bg=p.surface, fg=p.muted).pack(anchor="w", pady=(4, 0))
+        self.streak_mini.pack(side="left", padx=(0, 14))
+
+        self.theme_btn = RoundedButton(
+            right, self._theme,
+            "深色" if self.store.settings.theme == "light" else "浅色",
+            command=self.toggle_theme, variant="ghost", height=32, padx=14,
+        )
+        self.theme_btn.pack(side="left")
+
+        tk.Label(right, text=f"v{VERSION}", font=self._theme.font_sm,
+                 bg=p.surface, fg=p.muted).pack(side="left", padx=(10, 0))
 
     # ------------------------------------------------------------ 页面调度
     def show_page(self, key):
@@ -701,13 +708,20 @@ class App:
         win.after(60, title_entry.focus_set)
 
     # ------------------------------------------------------------ 主题 / 数据
-    def set_theme(self, name: str):
+    def set_theme(self, name: str, accent: str | None = None):
         name = "dark" if name == "dark" else "light"
-        if name == self.store.settings.theme:
+        accent = accent or self.store.settings.accent
+        settings = self.store.settings
+        if name == settings.theme and accent == settings.accent:
             return
-        self.store.settings.theme = name
+        settings.theme = name
+        settings.accent = accent
         self.repo.save(self.store)
         self.rebuild()
+
+    def toggle_theme(self):
+        """顶部栏一键在浅色 / 深色之间切换。"""
+        self.set_theme("dark" if self.store.settings.theme == "light" else "light")
 
     def rebuild(self):
         current = self.current_key

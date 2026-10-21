@@ -94,6 +94,13 @@ class RepositoryTest(unittest.TestCase):
         self.repo.load()
         self.assertFalse(self.repo.last_load_recovered)
 
+    def test_accent_setting(self):
+        from study_timer.models import Settings
+
+        self.assertEqual(Settings.from_dict({}).accent, "blue")
+        self.assertEqual(Settings.from_dict({"accent": "purple"}).accent, "purple")
+        self.assertEqual(Settings.from_dict({"accent": "neon"}).accent, "blue")
+
     def test_break_settings_defaults_and_clamp(self):
         from study_timer.models import Settings
 

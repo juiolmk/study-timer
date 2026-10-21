@@ -12,6 +12,7 @@ from datetime import datetime
 import uuid
 
 from .config import (
+    ACCENT_NAMES,
     DEFAULT_FOCUS,
     DEFAULT_GOAL,
     DEFAULT_LONG_BREAK,
@@ -126,6 +127,7 @@ class Settings:
     remind_time: str = "21:00"
     focus_preset: int = DEFAULT_FOCUS
     theme: str = "light"
+    accent: str = "blue"
     hotkey_enabled: bool = True
     ask_before_start: bool = True
     auto_break: bool = True
@@ -149,6 +151,10 @@ class Settings:
         if theme not in ("light", "dark"):
             theme = "light"
 
+        accent = _as_str(data.get("accent"), "blue").strip().lower()
+        if accent not in ACCENT_NAMES:
+            accent = "blue"
+
         try:
             preset = int(data.get("focus_preset", DEFAULT_FOCUS))
         except Exception:
@@ -168,6 +174,7 @@ class Settings:
             remind_time=remind_time,
             focus_preset=preset,
             theme=theme,
+            accent=accent,
             hotkey_enabled=_parse_flag(data.get("hotkey_enabled"), True),
             ask_before_start=_parse_flag(data.get("ask_before_start"), True),
             auto_break=_parse_flag(data.get("auto_break"), True),

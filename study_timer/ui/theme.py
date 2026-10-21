@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-"""主题：浅色/深色配色、字体与 ttk 样式。"""
+"""主题：浅色/深色配色、强调色、字体与 ttk 样式。"""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from tkinter import ttk
 
 FONT_FAMILY = "Microsoft YaHei UI"
@@ -42,12 +42,12 @@ class Palette:
 
 LIGHT = Palette(
     name="light",
-    bg="#f3f6fb",
+    bg="#f6f8fc",
     surface="#ffffff",
-    surface_alt="#eef2f9",
-    text="#1a2330",
+    surface_alt="#f0f4fa",
+    text="#16202e",
     muted="#6b7789",
-    border="#e4e9f2",
+    border="#e7ecf5",
     primary="#4f6df5",
     primary_hover="#3f5ce4",
     primary_press="#3550cf",
@@ -55,17 +55,17 @@ LIGHT = Palette(
     success="#1fa971",
     warning="#e6a23c",
     danger="#e5484d",
-    track="#e2e8f3",
+    track="#e6ecf6",
 )
 
 DARK = Palette(
     name="dark",
-    bg="#141922",
-    surface="#1d2531",
-    surface_alt="#252f3d",
+    bg="#121722",
+    surface="#1b2330",
+    surface_alt="#232d3c",
     text="#e8eef7",
     muted="#94a2b6",
-    border="#2b3646",
+    border="#2a3545",
     primary="#6c86ff",
     primary_hover="#5c78f5",
     primary_press="#4f6ae6",
@@ -73,19 +73,37 @@ DARK = Palette(
     success="#35b982",
     warning="#e6a23c",
     danger="#f2555a",
-    track="#2a3544",
+    track="#293444",
 )
 
+#: 可选强调色：浅色/深色各一套主色
+ACCENTS = {
+    "blue": {"label": "雾蓝", "light": "#4f6df5", "dark": "#6c86ff"},
+    "green": {"label": "松绿", "light": "#1f9d6b", "dark": "#35b982"},
+    "purple": {"label": "暮紫", "light": "#7c5cff", "dark": "#9b7bff"},
+    "orange": {"label": "暖橙", "light": "#e8833a", "dark": "#f09a55"},
+}
 
-def get_palette(name: str) -> Palette:
-    return DARK if name == "dark" else LIGHT
+
+def get_palette(name: str = "light", accent: str = "blue") -> Palette:
+    """返回指定明暗与强调色的调色板。"""
+    base = DARK if name == "dark" else LIGHT
+    accent = accent if accent in ACCENTS else "blue"
+    primary = ACCENTS[accent]["dark" if name == "dark" else "light"]
+    return replace(
+        base,
+        primary=primary,
+        primary_hover=mix(primary, "#000000", 0.10),
+        primary_press=mix(primary, "#000000", 0.18),
+    )
 
 
 class Theme:
     """把配色与字体打包，供各页面使用。"""
 
-    def __init__(self, name: str = "light"):
-        self.p = get_palette(name)
+    def __init__(self, name: str = "light", accent: str = "blue"):
+        self.accent = accent if accent in ACCENTS else "blue"
+        self.p = get_palette(name, self.accent)
         self.name = self.p.name
 
         self.font_sm = font(9)

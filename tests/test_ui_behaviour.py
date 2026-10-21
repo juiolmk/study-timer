@@ -294,6 +294,18 @@ class RecordsPaginationTest(_TkAppFixture):
     def test_canvas_draws_items(self):
         self.assertTrue(self.page.canvas.find_all())
 
+    def test_dashboard_and_top_nav(self):
+        # 趋势图按画布实际宽度绘制，需要窗口真正映射后才能断言图元
+        self.root.deiconify()
+        self.root.update()
+        self.app.show_page("home")
+        self.root.update()
+        home = self.app.pages["home"]
+        self.assertEqual(set(self.app.nav_buttons),
+                         {"home", "records", "stats", "settings"})
+        self.assertGreaterEqual(len(home.trend.find_all()), 15)
+        self.assertTrue(home.time_label.cget("text"))
+
 
 # ---------------------------------------------------------------- 设置文案
 class SettingsWordingTest(_TkAppFixture):

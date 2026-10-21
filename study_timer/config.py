@@ -37,5 +37,8 @@ DEFAULT_SHORT_BREAK = 5
 DEFAULT_LONG_BREAK = 15
 DEFAULT_ROUNDS_PER_LONG = 4
 
+# 可选强调色
+ACCENT_NAMES = ("blue", "green", "purple", "orange")
+
 # 少于该秒数不记录
 MIN_RECORD_SECONDS = 5

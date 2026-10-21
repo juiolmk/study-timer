@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""首页：计时 / 番茄钟 / 今日概览 / 最近记录。"""
+"""首页：仪表盘（计时 / 今日进度 / 数据概览 / 最近记录 / 7 日趋势）。"""
 
 from __future__ import annotations
 
 import tkinter as tk
-from datetime import date
+from datetime import date, datetime
 
 from ...config import WEEKDAY_CN
 from ...services import (
@@ -14,7 +14,7 @@ from ...services import (
     PHASE_SHORT_BREAK,
     PHASE_WORK,
 )
-from ..widgets import Card, RingProgress, RoundedButton, Segmented
+from ..widgets import Card, RingProgress, RoundedButton, Segmented, round_rect
 
 
 class HomePage(tk.Frame):
@@ -38,37 +38,55 @@ class HomePage(tk.Frame):
     def _build(self):
         p = self.t.p
 
+        # 顶部问候
         header = tk.Frame(self, bg=p.bg)
-        header.pack(fill="x", padx=28, pady=(22, 12))
-        tk.Label(header, text="今日学习", font=self.t.font_h1, bg=p.bg, fg=p.text).pack(side="left")
-        self.date_label = tk.Label(header, text="", font=self.t.font_sm, bg=p.bg, fg=p.muted)
-        self.date_label.pack(side="left", padx=12, pady=(10, 0))
+        header.pack(fill="x", padx=32, pady=(22, 14))
+        left = tk.Frame(header, bg=p.bg)
+        left.pack(side="left")
+        self.greeting = tk.Label(left, text="", font=self.t.font_h1,
+                                 bg=p.bg, fg=p.text)
+        self.greeting.pack(anchor="w")
+        self.date_label = tk.Label(left, text="", font=self.t.font_sm,
+                                   bg=p.bg, fg=p.muted)
+        self.date_label.pack(anchor="w", pady=(3, 0))
 
-        # 计时卡片
-        card = Card(self, self.t)
-        card.pack(fill="x", padx=28, pady=(0, 14))
-        inner = tk.Frame(card, bg=p.surface)
-        inner.pack(fill="x", padx=24, pady=20)
-
-        left = tk.Frame(inner, bg=p.surface)
-        left.pack(side="left", fill="both", expand=True)
-        tk.Label(left, text="专注计时", font=self.t.font_sm, bg=p.surface, fg=p.muted).pack(anchor="w")
-
-        self.segmented = Segmented(
-            left, self.t, ["自由计时", "25 分", "45 分", "60 分"], self._on_mode,
+        self.header_goal = tk.Label(
+            header, text="", font=self.t.font_sm, bg=p.surface_alt,
+            fg=p.primary, padx=12, pady=6,
         )
-        self.segmented.pack(anchor="w", pady=(8, 10))
+        self.header_goal.pack(side="right", pady=6)
 
-        self.time_label = tk.Label(left, text="00:00:00", font=self.t.font_timer,
+        # 主区：计时器 + 今日进度
+        hero = tk.Frame(self, bg=p.bg)
+        hero.pack(fill="x", padx=32)
+        hero.grid_columnconfigure(0, weight=3)
+        hero.grid_columnconfigure(1, weight=1, minsize=250)
+        hero.grid_rowconfigure(0, weight=1)
+
+        timer_card = Card(hero, self.t)
+        timer_card.grid(row=0, column=0, sticky="nsew", padx=(0, 14))
+        inner = tk.Frame(timer_card, bg=p.surface)
+        inner.pack(fill="both", expand=True, padx=24, pady=16)
+
+        top = tk.Frame(inner, bg=p.surface)
+        top.pack(fill="x")
+        tk.Label(top, text="专注计时", font=self.t.font_sm,
+                 bg=p.surface, fg=p.muted).pack(side="left")
+        self.segmented = Segmented(
+            top, self.t, ["自由计时", "25 分", "45 分", "60 分"], self._on_mode,
+        )
+        self.segmented.pack(side="right")
+
+        self.time_label = tk.Label(inner, text="00:00:00", font=self.t.font_timer,
                                    bg=p.surface, fg=p.text)
-        self.time_label.pack(anchor="w")
+        self.time_label.pack(pady=(14, 2))
 
-        self.status_label = tk.Label(left, text="未开始", font=self.t.font_sm,
+        self.status_label = tk.Label(inner, text="未开始", font=self.t.font_sm,
                                      bg=p.surface, fg=p.muted)
-        self.status_label.pack(anchor="w", pady=(0, 14))
+        self.status_label.pack()
 
-        actions = tk.Frame(left, bg=p.surface)
-        actions.pack(anchor="w")
+        actions = tk.Frame(inner, bg=p.surface)
+        actions.pack(pady=(16, 0))
         self.btn_toggle = RoundedButton(actions, self.t, "开始学习", command=self.toggle)
         self.btn_toggle.pack(side="left")
         self.btn_finish = RoundedButton(actions, self.t, "结束并保存", command=self._finish,
@@ -79,23 +97,39 @@ class HomePage(tk.Frame):
                                        variant="ghost")
         self.btn_quick.pack(side="left")
 
-        right = tk.Frame(inner, bg=p.surface)
-        right.pack(side="right")
-        self.ring = RingProgress(right, self.t)
-        self.ring.pack()
+        progress = Card(hero, self.t)
+        progress.grid(row=0, column=1, sticky="nsew")
+        pin = tk.Frame(progress, bg=p.surface)
+        pin.pack(fill="both", expand=True, padx=16, pady=14)
+        tk.Label(pin, text="今日进度", font=self.t.font_sm,
+                 bg=p.surface, fg=p.muted).pack(anchor="w")
+        self.ring = RingProgress(pin, self.t, size=148, thickness=12)
+        self.ring.pack(pady=(8, 6))
+        self.hero_today = tk.Label(pin, text="", font=self.t.font_sm,
+                                   bg=p.surface, fg=p.muted)
+        self.hero_today.pack()
+        self.hero_streak = tk.Label(pin, text="", font=self.t.font_sm,
+                                    bg=p.surface, fg=p.muted)
+        self.hero_streak.pack(pady=(4, 0))
 
-        # 概览卡片
+        # 数据卡
         stats = tk.Frame(self, bg=p.bg)
-        stats.pack(fill="x", padx=28)
+        stats.pack(fill="x", padx=32, pady=(14, 0))
         for i in range(3):
             stats.grid_columnconfigure(i, weight=1, uniform="s")
         self.card_min = self._stat(stats, 0, "今日已学", "0 分")
         self.card_streak = self._stat(stats, 1, "连续打卡", "0 天")
         self.card_goal = self._stat(stats, 2, "今日目标", "0%")
 
-        # 最近记录
-        recent = Card(self, self.t)
-        recent.pack(fill="both", expand=True, padx=28, pady=14)
+        # 底部：最近记录 + 7 日趋势
+        bottom = tk.Frame(self, bg=p.bg)
+        bottom.pack(fill="both", expand=True, padx=32, pady=(14, 22))
+        bottom.grid_columnconfigure(0, weight=2)
+        bottom.grid_columnconfigure(1, weight=1, minsize=260)
+        bottom.grid_rowconfigure(0, weight=1)
+
+        recent = Card(bottom, self.t)
+        recent.grid(row=0, column=0, sticky="nsew", padx=(0, 14))
         recent_header = tk.Frame(recent, bg=p.surface)
         recent_header.pack(fill="x", padx=18, pady=(14, 6))
         tk.Label(recent_header, text="最近记录", font=self.t.font_h2,
@@ -106,7 +140,22 @@ class HomePage(tk.Frame):
         more.bind("<Button-1>", lambda _e: self.app.show_page("records"))
 
         self.recent_box = tk.Frame(recent, bg=p.surface)
-        self.recent_box.pack(fill="both", expand=True, padx=18, pady=(0, 14))
+        self.recent_box.pack(fill="both", expand=True, padx=18, pady=(0, 10))
+
+        trend_card = Card(bottom, self.t)
+        trend_card.grid(row=0, column=1, sticky="nsew")
+        trend_header = tk.Frame(trend_card, bg=p.surface)
+        trend_header.pack(fill="x", padx=16, pady=(14, 0))
+        tk.Label(trend_header, text="近 7 天", font=self.t.font_h2,
+                 bg=p.surface, fg=p.text).pack(side="left")
+        self.trend_total = tk.Label(trend_header, text="", font=self.t.font_sm,
+                                    bg=p.surface, fg=p.muted)
+        self.trend_total.pack(side="right")
+
+        self.trend = tk.Canvas(trend_card, bg=p.surface,
+                               highlightthickness=0, height=110)
+        self.trend.pack(fill="both", expand=True, padx=16, pady=(4, 10))
+        self.trend.bind("<Configure>", lambda _e: self._draw_trend())
 
     def _stat(self, parent, column, title, value):
         p = self.t.p
@@ -114,24 +163,41 @@ class HomePage(tk.Frame):
         card.grid(row=0, column=column,
                   padx=(0 if column == 0 else 10, 0), sticky="ew")
         tk.Label(card, text=title, font=self.t.font_sm, bg=p.surface, fg=p.muted).pack(
-            anchor="w", padx=14, pady=(12, 0))
+            anchor="w", padx=16, pady=(12, 0))
         val = tk.Label(card, text=value, font=self.t.font_num, bg=p.surface, fg=p.text)
-        val.pack(anchor="w", padx=14, pady=(0, 12))
+        val.pack(anchor="w", padx=16, pady=(0, 12))
         return val
 
     # ------------------------------------------------------------ 刷新
     def refresh(self):
         today = date.today()
+        hour = datetime.now().hour
+        if 5 <= hour < 11:
+            greeting = "早上好"
+        elif 11 <= hour < 14:
+            greeting = "中午好"
+        elif 14 <= hour < 18:
+            greeting = "下午好"
+        else:
+            greeting = "晚上好"
+
+        self.greeting.configure(text=f"{greeting}，今天想学点什么？")
         self.date_label.configure(
             text=today.strftime("%Y年%m月%d日") + " · 周" + WEEKDAY_CN[today.weekday()])
 
         today_min = self.app.stats.minutes_on(today.isoformat())
         goal = max(1, self.app.store.settings.goal_min)
+        streak = self.app.stats.current_streak()
+
+        self.header_goal.configure(text=f"今日目标 {goal} 分")
         self.card_min.configure(text=self.app.fmt(today_min))
-        self.card_streak.configure(text=f"{self.app.stats.current_streak()} 天")
+        self.card_streak.configure(text=f"{streak} 天")
         self.card_goal.configure(text=f"{min(100, int(today_min / goal * 100))}%")
+        self.hero_today.configure(text=f"已学 {today_min} 分 · 目标 {goal} 分")
+        self.hero_streak.configure(text=f"连续 {streak} 天")
 
         self._refresh_recent()
+        self._draw_trend()
         self.update_timer_display()
 
     def _refresh_recent(self):
@@ -148,10 +214,15 @@ class HomePage(tk.Frame):
 
         for record in records:
             row = tk.Frame(self.recent_box, bg=p.surface)
-            row.pack(fill="x", pady=4)
-            tk.Label(row, text="📘", font=self.t.font, bg=p.surface, fg=p.primary).pack(side="left")
+            row.pack(fill="x", pady=3)
+
+            dot = tk.Canvas(row, width=8, height=8, bg=p.surface,
+                            highlightthickness=0)
+            dot.create_oval(1, 1, 7, 7, fill=p.primary, outline="")
+            dot.pack(side="left", padx=(0, 8))
+
             tk.Label(row, text=record.title or "(未命名)", font=self.t.font_bold,
-                     bg=p.surface, fg=p.text).pack(side="left", padx=6)
+                     bg=p.surface, fg=p.text, width=24, anchor="w").pack(side="left")
             if record.tag:
                 tk.Label(row, text=record.tag, font=self.t.font_sm, bg=p.surface_alt,
                          fg=p.primary, padx=8, pady=1).pack(side="left", padx=4)
@@ -159,6 +230,43 @@ class HomePage(tk.Frame):
                      bg=p.surface, fg=p.muted).pack(side="left", padx=6)
             tk.Label(row, text=self.app.fmt(record.duration_min), font=self.t.font_bold,
                      bg=p.surface, fg=p.success).pack(side="right")
+
+    def _draw_trend(self):
+        self.trend.delete("all")
+        width = self.trend.winfo_width()
+        if width <= 20:
+            return
+
+        p = self.t.p
+        series = self.app.stats.series(7)
+        maximum = max([minutes for _, minutes in series] + [1])
+        chart_top, chart_bottom, gap = 8, 62, 6
+        bar_w = max(8, (width - gap * 8) / 7)
+        today_iso = date.today().isoformat()
+        total = 0
+
+        for index, (day, minutes) in enumerate(series):
+            total += minutes
+            day_obj = date.fromisoformat(day)
+            x = gap + index * (bar_w + gap)
+            height = int((minutes / maximum) * (chart_bottom - chart_top))
+            if height > 0:
+                color = (p.primary if day == today_iso
+                         else self.t.mix(p.primary, p.surface_alt, 0.45))
+                round_rect(self.trend, x, chart_bottom - height, x + bar_w,
+                           chart_bottom, min(5, bar_w / 2), fill=color, outline="")
+            else:
+                round_rect(self.trend, x, chart_bottom - 3, x + bar_w,
+                           chart_bottom, 2, fill=p.track, outline="")
+            self.trend.create_text(
+                x + bar_w / 2, chart_bottom + 14,
+                text=WEEKDAY_CN[day_obj.weekday()], fill=p.muted,
+                font=self.t.font_sm,
+            )
+
+        self.trend.create_line(gap, chart_bottom, width - gap, chart_bottom,
+                               fill=p.border)
+        self.trend_total.configure(text=f"共 {total} 分")
 
     # ------------------------------------------------------------ 计时交互
     def _on_mode(self, index):

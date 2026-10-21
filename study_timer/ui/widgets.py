@@ -7,7 +7,7 @@ import tkinter as tk
 from tkinter import font as tkfont
 from tkinter import ttk
 
-from .theme import mix
+from .theme import ACCENTS, mix
 
 
 # ---------------------------------------------------------------- 基础绘制
@@ -374,3 +374,86 @@ class SidebarButton(tk.Frame):
             self._paint(p.surface)
             self._bar.configure(bg=p.surface)
             self._label.configure(fg=p.muted)
+
+
+# ---------------------------------------------------------------- 顶部导航按钮
+class TopNavButton(tk.Frame):
+    """横向导航项：文字 + 底部 2px 指示条。"""
+
+    def __init__(self, master, theme, text, command):
+        super().__init__(master, bg=theme.p.surface, cursor="hand2")
+        self._theme = theme
+        self._command = command
+        self._active = False
+
+        self._label = tk.Label(
+            self, text=text, font=theme.font_bold, bg=theme.p.surface,
+            fg=theme.p.muted, padx=12, pady=6,
+        )
+        self._label.pack()
+        self._bar = tk.Frame(self, bg=theme.p.surface, height=2)
+        self._bar.pack(fill="x", padx=8)
+
+        for widget in (self, self._label):
+            widget.bind("<Button-1>", lambda _e: self._command())
+            widget.bind("<Enter>", self._hover)
+            widget.bind("<Leave>", self._leave)
+
+    def _paint(self, color):
+        self.configure(bg=color)
+        self._label.configure(bg=color)
+
+    def _hover(self, _event):
+        if not self._active:
+            self._paint(self._theme.p.surface_alt)
+
+    def _leave(self, _event):
+        if not self._active:
+            self._paint(self._theme.p.surface)
+
+    def set_active(self, active: bool):
+        self._active = active
+        p = self._theme.p
+        if active:
+            self._paint(p.surface_alt)
+            self._label.configure(fg=p.primary)
+            self._bar.configure(bg=p.primary)
+        else:
+            self._paint(p.surface)
+            self._label.configure(fg=p.muted)
+            self._bar.configure(bg=p.surface)
+
+
+# ---------------------------------------------------------------- 强调色选择
+class AccentPicker(tk.Frame):
+    """四个圆形色点，点击切换强调色。"""
+
+    def __init__(self, master, theme, current, command):
+        bg = master.cget("bg")
+        super().__init__(master, bg=bg)
+        self._theme = theme
+        self._command = command
+        self._current = current
+
+        for key, meta in ACCENTS.items():
+            color = meta["dark" if theme.name == "dark" else "light"]
+            dot = tk.Canvas(self, width=30, height=30, bg=bg,
+                            highlightthickness=0, cursor="hand2")
+            dot.create_oval(
+                5, 5, 25, 25, fill=color,
+                outline=theme.p.text if key == current else theme.p.border,
+                width=2,
+            )
+            dot.pack(side="left", padx=3)
+            dot.bind("<Button-1>", lambda _e, k=key: self._select(k))
+
+        self._label = tk.Label(
+            self, text=ACCENTS.get(current, ACCENTS["blue"])["label"],
+            font=theme.font_sm, bg=bg, fg=theme.p.muted,
+        )
+        self._label.pack(side="left", padx=(8, 0))
+
+    def _select(self, key):
+        if key == self._current:
+            return
+        self._command(key)

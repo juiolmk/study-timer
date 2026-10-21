@@ -11,7 +11,7 @@ from tkinter import filedialog, messagebox, ttk
 
 from ...config import DATA_DIR, LOG_DIR, VERSION
 from ...hotkey import HOTKEY_TEXT
-from ..widgets import Card, RoundedButton, ScrollableFrame, Segmented, make_entry
+from ..widgets import AccentPicker, Card, RoundedButton, ScrollableFrame, Segmented, make_entry
 
 logger = logging.getLogger(__name__)
 
@@ -111,6 +111,12 @@ class SettingsPage(tk.Frame):
         )
         self._row(form, 0, "主题", self.theme_seg)
 
+        accent_row = tk.Frame(form, bg=p.surface)
+        self.accent_picker = AccentPicker(
+            accent_row, self.t, settings.accent, self._on_accent)
+        self.accent_picker.pack(side="left")
+        self._row(form, 1, "强调色", accent_row)
+
         # 快捷键
         form = self._section("快捷键", "在任意窗口开始 / 暂停计时")
         self.hotkey_var = tk.BooleanVar(value=bool(settings.hotkey_enabled))
@@ -190,6 +196,9 @@ class SettingsPage(tk.Frame):
     # ------------------------------------------------------------ 主题
     def _on_theme(self, index):
         self.app.set_theme("dark" if index == 1 else "light")
+
+    def _on_accent(self, accent):
+        self.app.set_theme(self.app.store.settings.theme, accent)
 
     # ------------------------------------------------------------ 快捷键
     def _on_hotkey_toggle(self):
