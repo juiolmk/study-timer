@@ -65,7 +65,7 @@ class SettingsPage(tk.Frame):
         form = self._section("计时", "开始前可先明确这次学什么")
         self.ask_before_start_var = tk.BooleanVar(value=bool(settings.ask_before_start))
         ask_check = tk.Checkbutton(
-            form, text="开始计时前询问学习内容（可跳过）",
+            form, text="开始计时前询问学习内容（仅按钮启动；快捷键不询问）",
             variable=self.ask_before_start_var,
             font=self.t.font, bg=p.surface, fg=p.text,
             activebackground=p.surface, activeforeground=p.text,

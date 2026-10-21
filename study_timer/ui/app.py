@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import ctypes
 import logging
+import os
 import tkinter as tk
 import uuid
 from datetime import date, datetime, timedelta
@@ -20,6 +21,7 @@ from ..config import (
 from ..hotkey import HOTKEY_TEXT, POLL_INTERVAL_MS, HotkeyManager
 from ..logging_setup import get_log_path, install_exception_hooks, setup_logging
 from ..models import Record
+from ..resources import resource_path
 from ..services import (
     MODE_COUNTDOWN,
     PHASE_LONG_BREAK,
@@ -67,6 +69,7 @@ class App:
         root.geometry("980x660")
         root.minsize(860, 580)
         root.configure(bg=self._theme.p.bg)
+        self._apply_window_icon()
         root.protocol("WM_DELETE_WINDOW", self.on_close)
         # Tk 回调内抛出的异常默认打到 stderr（打包后不可见），统一收进日志
         root.report_callback_exception = self._report_callback_exception
@@ -87,6 +90,20 @@ class App:
             if not self.hotkey.start():
                 root.after(600, self._notify_hotkey_unavailable)
         root.after(POLL_INTERVAL_MS, self._poll_hotkey)
+
+    # ------------------------------------------------------------ 图标
+    def _apply_window_icon(self) -> None:
+        """设置窗口 / 任务栏图标（``default`` 同时作用于后续 Toplevel）。
+
+        图标是纯装饰：文件缺失或 Tk 设置失败只记一条 warning，绝不阻断启动。
+        """
+        icon = resource_path("assets/study_timer.ico")
+        try:
+            if not os.path.isfile(icon):
+                raise FileNotFoundError(f"图标文件不存在：{icon}")
+            self.root.iconbitmap(default=icon)
+        except Exception:
+            logger.warning("设置窗口图标失败：%s", icon, exc_info=True)
 
     # ------------------------------------------------------------ 布局
     def build_ui(self):

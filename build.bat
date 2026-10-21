@@ -18,7 +18,7 @@ python -m pip install --quiet --upgrade pip
 python -m pip install --quiet pyinstaller
 
 python -m compileall -q study_timer app.py
-python -m PyInstaller --onefile --windowed --name 学习打卡 --collect-submodules study_timer app.py --noconfirm --clean
+python -m PyInstaller --onefile --windowed --name 学习打卡 --icon assets/study_timer.ico --version-file version_info.txt --add-data "assets/study_timer.ico;assets" --collect-submodules study_timer app.py --noconfirm --clean
 
 echo.
 echo 打包完成！exe 位于 dist\学习打卡.exe

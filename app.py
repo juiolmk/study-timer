@@ -5,7 +5,10 @@
     python app.py
 
 打包为单文件 exe：
-    pyinstaller --onefile --windowed --name 学习打卡 app.py
+    pyinstaller --onefile --windowed --name 学习打卡 \
+        --icon assets/study_timer.ico --version-file version_info.txt \
+        --add-data "assets/study_timer.ico;assets" \
+        --collect-submodules study_timer app.py
 """
 
 from study_timer.ui.app import run

@@ -57,10 +57,14 @@ python -m unittest discover -s tests -v
 
 ```bash
 pip install pyinstaller
-pyinstaller --onefile --windowed --name 学习打卡 --collect-submodules study_timer app.py
+pyinstaller --onefile --windowed --name 学习打卡 --icon assets/study_timer.ico --version-file version_info.txt --add-data "assets/study_timer.ico;assets" --collect-submodules study_timer app.py
 ```
 
 也可双击 `build.bat` 一键打包。产物：`dist/学习打卡.exe`。
+
+- `--icon` + `--add-data`：exe 文件图标与窗口图标都用 `assets/study_timer.ico`（`--onefile` 需把 ico 一起带上，运行时由 `study_timer/resources.py` 定位）。
+- `--version-file`：写入 `version_info.txt` 的中文名称与版本，可在 exe 属性页看到「学习打卡」/ 2.0.0.0。
+- 图标是入库的静态资源，**不需要** Pillow；仅在需要改图标时运行 `python tools/make_icon.py`（开发期依赖 Pillow）。
 
 ## 数据
 
@@ -78,11 +82,14 @@ pyinstaller --onefile --windowed --name 学习打卡 --collect-submodules study_
 ```
 .
 ├── app.py                   # 入口（薄封装）
+├── assets/
+│   └── study_timer.ico      # 应用图标（16/24/32/48/64/128/256 七档，入库）
 ├── study_timer/
 │   ├── config.py            # 路径与常量
 │   ├── hotkey.py            # 全局快捷键（ctypes 调用 Win32，零依赖）
 │   ├── logging_setup.py     # 文件日志（1MB×3 轮转）与全局异常钩子
 │   ├── models.py            # Record / Settings / Store + 校验与迁移
+│   ├── resources.py         # 静态资源定位（源码 / PyInstaller 打包统一入口）
 │   ├── services.py          # TimerService / StatsService
 │   ├── single_instance.py   # 单实例保护（命名互斥量）
 │   ├── storage.py           # 原子写入、备份、导入导出
@@ -96,7 +103,10 @@ pyinstaller --onefile --windowed --name 学习打卡 --collect-submodules study_
 │           ├── stats.py
 │           └── settings.py
 ├── tests/                   # unittest 测试
+├── tools/
+│   └── make_icon.py         # 图标生成脚本（开发期用 Pillow，运行时不需要）
 ├── build.bat
+├── version_info.txt         # PyInstaller 版本资源（exe 属性页信息）
 ├── requirements.txt
 └── README.md
 ```
