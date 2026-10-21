@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
-"""界面行为回归测试：热键免询问、记录分页保留。
+"""界面行为回归测试：热键免询问、记录分页保留、设置文案、图标降级。
 
 - 热键用例用轻量假对象直接驱动 ``App._on_hotkey``，不需要真的 Tk 窗口与热键。
-- 分页用例需要 Tk；无可用 GUI 环境时自动跳过（不伪造通过）。
+- 其余用例需要真实 Tk 窗口；无可用 GUI 环境时自动跳过（不伪造通过）。
 """
 
 import contextlib
@@ -12,11 +12,13 @@ import tempfile
 import tkinter as tk
 import types
 import unittest
+from pathlib import Path
 from tkinter import messagebox
 from unittest import mock
 
 import study_timer.ui.app as ui_app
 from study_timer.models import Record, Store
+from study_timer.resources import resource_path as project_resource_path
 from study_timer.storage import Repository
 from study_timer.ui.pages.records import PAGE_SIZE
 
@@ -145,15 +147,18 @@ class _StubHotkey:
 
 
 @unittest.skipUnless(TK_AVAILABLE, "无可用 GUI 环境（Tk 初始化失败）")
-class RecordsPaginationTest(unittest.TestCase):
-    TOTAL = 120
+class _TkAppFixture(unittest.TestCase):
+    """真实 Tk + 临时数据目录的 App 夹具（子类只加自己的断言）。"""
+
+    #: 预置记录条数；轻量用例可改小以缩短初始化时间
+    RECORDS = 0
 
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp()
         data_file = os.path.join(self.tmpdir, "study_data.json")
         backup_file = os.path.join(self.tmpdir, "study_data.bak.json")
         self.repo = Repository(data_file, backup_file)
-        self.repo.save(_build_store(self.TOTAL))
+        self.repo.save(_build_store(self.RECORDS))
 
         self._stack = contextlib.ExitStack()
         self._stack.enter_context(
@@ -165,9 +170,6 @@ class RecordsPaginationTest(unittest.TestCase):
         self.root.withdraw()
         self.app = ui_app.App(self.root)
         self.root.update()
-        self.app.show_page("records")
-        self.root.update()
-        self.page = self.app.pages["records"]
 
     def tearDown(self):
         self.app._alive = False
@@ -187,6 +189,17 @@ class RecordsPaginationTest(unittest.TestCase):
             pass
         self._stack.close()
         shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+
+class RecordsPaginationTest(_TkAppFixture):
+    TOTAL = 120
+    RECORDS = 120
+
+    def setUp(self):
+        super().setUp()
+        self.app.show_page("records")
+        self.root.update()
+        self.page = self.app.pages["records"]
 
     # ---------- 辅助 ----------
     def _rows(self):
@@ -280,6 +293,69 @@ class RecordsPaginationTest(unittest.TestCase):
 
     def test_canvas_draws_items(self):
         self.assertTrue(self.page.canvas.find_all())
+
+
+# ---------------------------------------------------------------- 设置文案
+class SettingsWordingTest(_TkAppFixture):
+    """锁住“开始前询问”文案：说明只在按钮启动时询问，快捷键不询问。"""
+
+    PROMPT_TEXT = "开始计时前询问学习内容（仅按钮启动；快捷键不询问）"
+    OLD_TEXT = "开始计时前询问学习内容（可跳过）"
+
+    def _collect_checktexts(self, widget):
+        """递归收集该页面下所有 Checkbutton 的文案。"""
+        texts = []
+        for child in widget.winfo_children():
+            if isinstance(child, tk.Checkbutton):
+                texts.append(child.cget("text"))
+            texts.extend(self._collect_checktexts(child))
+        return texts
+
+    def test_prompt_checkbox_wording(self):
+        self.app.show_page("settings")
+        self.root.update()
+
+        texts = self._collect_checktexts(self.app.pages["settings"])
+        self.assertIn(self.PROMPT_TEXT, texts)
+        self.assertNotIn(self.OLD_TEXT, texts, "旧文案不应残留")
+
+
+# ---------------------------------------------------------------- 图标降级
+class WindowIconTest(_TkAppFixture):
+    """窗口图标是装饰：正常时静默设置，缺失 / 损坏时只 warning，绝不阻断启动。"""
+
+    def test_present_icon_is_applied_silently(self):
+        with mock.patch.object(ui_app.logger, "warning") as warn:
+            self.app._apply_window_icon()  # 真实 assets/study_timer.ico
+        warn.assert_not_called()
+        self.assertTrue(Path(project_resource_path("assets/study_timer.ico")).is_file())
+
+    def test_missing_or_broken_icon_only_warns(self):
+        missing = os.path.join(self.tmpdir, "assets", "study_timer.ico")
+
+        # 场景 1：图标文件不存在（resource_path 指向不存在的 ico）
+        with mock.patch.object(ui_app, "resource_path", lambda _rel: missing):
+            with mock.patch.object(ui_app.logger, "warning") as warn:
+                self.app._apply_window_icon()  # 不应抛异常
+        self.assertEqual(warn.call_count, 1)
+        self.assertIn("设置窗口图标失败", warn.call_args[0][0])
+        self.assertTrue(warn.call_args[1].get("exc_info"), "降级日志应带堆栈线索")
+
+        # 场景 2：文件在但 Tk 拒绝加载（用假 root 稳定复现 TclError，
+        # 同时说明 _apply_window_icon 只依赖 self.root.iconbitmap）
+        fake_root = mock.Mock()
+        fake_root.iconbitmap.side_effect = tk.TclError("not a valid icon")
+        original_root = self.app.root
+        self.app.root = fake_root
+        try:
+            with mock.patch.object(ui_app, "resource_path", project_resource_path):
+                with mock.patch.object(ui_app.logger, "warning") as warn:
+                    self.app._apply_window_icon()
+        finally:
+            self.app.root = original_root
+        self.assertEqual(warn.call_count, 1)
+        self.assertIn("设置窗口图标失败", warn.call_args[0][0])
+        fake_root.iconbitmap.assert_called_once()
 
 
 if __name__ == "__main__":

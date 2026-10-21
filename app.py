@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""学习打卡（StudyTimer）程序入口。
+r"""学习打卡（StudyTimer）程序入口。
 
 开发运行：
     python app.py
 
-打包为单文件 exe：
+打包为单文件 exe（``\`` 为 shell 续行符，需在 cmd / bash 中换行书写）：
     pyinstaller --onefile --windowed --name 学习打卡 \
         --icon assets/study_timer.ico --version-file version_info.txt \
         --add-data "assets/study_timer.ico;assets" \
