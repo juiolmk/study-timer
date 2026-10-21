@@ -302,9 +302,42 @@ class RecordsPaginationTest(_TkAppFixture):
         self.root.update()
         home = self.app.pages["home"]
         self.assertEqual(set(self.app.nav_buttons),
-                         {"home", "records", "stats", "settings"})
+                         {"home", "tasks", "records", "stats", "settings"})
         self.assertGreaterEqual(len(home.trend.find_all()), 15)
         self.assertTrue(home.time_label.cget("text"))
+
+    def test_start_dialog_centered(self):
+        self.root.deiconify()
+        self.root.update()
+        self.app.open_start_dialog(lambda: None)
+        self.root.update()
+        wins = [w for w in self.root.winfo_children()
+                if isinstance(w, tk.Toplevel)]
+        win = wins[-1]
+        expected_x = self.root.winfo_rootx() + (
+            self.root.winfo_width() - 430) // 2
+        expected_y = self.root.winfo_rooty() + (
+            self.root.winfo_height() - 300) // 2
+        self.assertLessEqual(abs(win.winfo_x() - expected_x), 5)
+        self.assertLessEqual(abs(win.winfo_y() - expected_y), 5)
+        win.destroy()
+
+    def test_task_page_and_start_task(self):
+        task = self.app.add_task("写论文", 0, "论文")
+        self.assertIsNotNone(task)
+
+        self.app.show_page("tasks")
+        self.root.update()
+        self.assertIn(task, self.app.pages["tasks"].app.today_tasks())
+
+        self.assertTrue(self.app.start_task(task))
+        self.assertTrue(self.app.timer.is_running)
+        self.assertEqual(self.app.current_task_id, task.id)
+        self.assertEqual(self.app.session_title, "写论文")
+        self.assertEqual(self.app.session_tag, "论文")
+
+        self.app.timer.stop()
+        self.app.current_task_id = ""
 
 
 # ---------------------------------------------------------------- 设置文案

@@ -7,6 +7,7 @@ import tkinter as tk
 from datetime import date, datetime
 
 from ...config import WEEKDAY_CN
+from ...tasks import PRIORITY_LABELS
 from ...services import (
     MODE_COUNTDOWN,
     MODE_STOPWATCH,
@@ -128,19 +129,22 @@ class HomePage(tk.Frame):
         bottom.grid_columnconfigure(1, weight=1, minsize=260)
         bottom.grid_rowconfigure(0, weight=1)
 
-        recent = Card(bottom, self.t)
-        recent.grid(row=0, column=0, sticky="nsew", padx=(0, 14))
-        recent_header = tk.Frame(recent, bg=p.surface)
-        recent_header.pack(fill="x", padx=18, pady=(14, 6))
-        tk.Label(recent_header, text="最近记录", font=self.t.font_h2,
+        tasks_card = Card(bottom, self.t)
+        tasks_card.grid(row=0, column=0, sticky="nsew", padx=(0, 14))
+        tasks_header = tk.Frame(tasks_card, bg=p.surface)
+        tasks_header.pack(fill="x", padx=18, pady=(14, 6))
+        tk.Label(tasks_header, text="今日任务", font=self.t.font_h2,
                  bg=p.surface, fg=p.text).pack(side="left")
-        more = tk.Label(recent_header, text="查看全部 ›", font=self.t.font_sm,
+        self.task_count = tk.Label(tasks_header, text="", font=self.t.font_sm,
+                                   bg=p.surface, fg=p.muted)
+        self.task_count.pack(side="left", padx=10)
+        more = tk.Label(tasks_header, text="查看全部 ›", font=self.t.font_sm,
                         bg=p.surface, fg=p.primary, cursor="hand2")
         more.pack(side="right")
-        more.bind("<Button-1>", lambda _e: self.app.show_page("records"))
+        more.bind("<Button-1>", lambda _e: self.app.show_page("tasks"))
 
-        self.recent_box = tk.Frame(recent, bg=p.surface)
-        self.recent_box.pack(fill="both", expand=True, padx=18, pady=(0, 10))
+        self.task_box = tk.Frame(tasks_card, bg=p.surface)
+        self.task_box.pack(fill="both", expand=True, padx=18, pady=(0, 10))
 
         trend_card = Card(bottom, self.t)
         trend_card.grid(row=0, column=1, sticky="nsew")
@@ -196,40 +200,86 @@ class HomePage(tk.Frame):
         self.hero_today.configure(text=f"已学 {today_min} 分 · 目标 {goal} 分")
         self.hero_streak.configure(text=f"连续 {streak} 天")
 
-        self._refresh_recent()
+        self.refresh_tasks()
         self._draw_trend()
         self.update_timer_display()
 
-    def _refresh_recent(self):
+    def refresh_tasks(self):
         p = self.t.p
-        for widget in self.recent_box.winfo_children():
+        tasks = self.app.today_tasks()
+        done = sum(1 for task in tasks if task.done)
+        self.task_count.configure(text=f"{done}/{len(tasks)}")
+
+        for widget in self.task_box.winfo_children():
             widget.destroy()
 
-        records = sorted(self.app.store.records,
-                         key=lambda r: (r.date, r.start), reverse=True)[:3]
-        if not records:
-            tk.Label(self.recent_box, text="还没有记录，开始第一次专注吧",
-                     font=self.t.font, bg=p.surface, fg=p.muted).pack(anchor="w", pady=8)
+        pending = [task for task in tasks if not task.done]
+        if not pending:
+            text = "今天的任务都完成了" if tasks else "今天还没有任务，去写下最重要的一件"
+            tk.Label(self.task_box, text=text, font=self.t.font,
+                     bg=p.surface, fg=p.muted).pack(anchor="w", pady=6)
+            if not tasks:
+                link = tk.Label(self.task_box, text="＋ 添加任务",
+                                font=self.t.font_sm, bg=p.surface,
+                                fg=p.primary, cursor="hand2")
+                link.pack(anchor="w")
+                link.bind("<Button-1>", lambda _e: self.app.show_page("tasks"))
             return
 
-        for record in records:
-            row = tk.Frame(self.recent_box, bg=p.surface)
+        for task in pending[:3]:
+            row = tk.Frame(self.task_box, bg=p.surface)
             row.pack(fill="x", pady=3)
 
-            dot = tk.Canvas(row, width=8, height=8, bg=p.surface,
-                            highlightthickness=0)
-            dot.create_oval(1, 1, 7, 7, fill=p.primary, outline="")
-            dot.pack(side="left", padx=(0, 8))
+            check = tk.Canvas(row, width=18, height=18, bg=p.surface,
+                              highlightthickness=0, cursor="hand2")
+            check.pack(side="left", padx=(0, 8))
+            self._draw_check(check, task.done)
+            check.bind("<Button-1>", lambda _e, t=task: self.app.toggle_task(t))
 
-            tk.Label(row, text=record.title or "(未命名)", font=self.t.font_bold,
-                     bg=p.surface, fg=p.text, width=24, anchor="w").pack(side="left")
-            if record.tag:
-                tk.Label(row, text=record.tag, font=self.t.font_sm, bg=p.surface_alt,
-                         fg=p.primary, padx=8, pady=1).pack(side="left", padx=4)
-            tk.Label(row, text=record.date[5:], font=self.t.font_sm,
-                     bg=p.surface, fg=p.muted).pack(side="left", padx=6)
-            tk.Label(row, text=self.app.fmt(record.duration_min), font=self.t.font_bold,
-                     bg=p.surface, fg=p.success).pack(side="right")
+            pill = tk.Label(row, text=PRIORITY_LABELS[task.priority],
+                            font=self.t.font_sm, bg=p.surface_alt,
+                            fg=self._priority_color(task.priority),
+                            padx=6, pady=1, cursor="hand2")
+            pill.pack(side="left", padx=(0, 6))
+            pill.bind("<Button-1>",
+                      lambda _e, t=task: self.app.cycle_task_priority(t))
+
+            current = task.id == self.app.current_task_id
+            title = tk.Label(row, text=task.title, font=self.t.font_bold,
+                             bg=p.surface, fg=p.primary if current else p.text,
+                             anchor="w", width=22)
+            title.pack(side="left", fill="x", expand=True)
+
+            minutes = self.app.task_minutes(task)
+            minutes_label = tk.Label(
+                row, text=f"{minutes} 分" if minutes else "—",
+                font=self.t.font_sm, bg=p.surface, fg=p.muted, width=6,
+            )
+            minutes_label.pack(side="left", padx=6)
+
+            start = tk.Label(row, text="▶", font=self.t.font_sm,
+                             bg=p.surface, fg=p.primary, cursor="hand2")
+            start.pack(side="left")
+
+            for widget in (row, title, minutes_label, start):
+                widget.bind("<Button-1>", lambda _e, t=task: self._start_task(t))
+
+    def _draw_check(self, canvas, done):
+        p = self.t.p
+        canvas.delete("all")
+        if done:
+            canvas.create_oval(1, 1, 17, 17, fill=p.success, outline="")
+            canvas.create_line(5, 9, 8, 12, 13, 6, fill="#ffffff", width=2)
+        else:
+            canvas.create_oval(1, 1, 17, 17, outline=p.border, width=2)
+
+    def _priority_color(self, priority):
+        p = self.t.p
+        return (p.danger, p.warning, p.muted)[max(0, min(2, priority))]
+
+    def _start_task(self, task):
+        if self.app.start_task(task):
+            self.refresh_tasks()
 
     def _draw_trend(self):
         self.trend.delete("all")
@@ -298,6 +348,12 @@ class HomePage(tk.Frame):
         """开始 / 暂停 / 继续。"""
         timer = self.app.timer
         if timer.is_idle:
+            task = self.app.current_task()
+            if task and not task.done:
+                self.app.start_task(task)
+                return
+            if task:
+                self.app.current_task_id = ""
             if prompt and self.app.store.settings.ask_before_start:
                 self.app.open_start_dialog(self._begin_start)
                 return

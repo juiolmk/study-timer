@@ -1,11 +1,11 @@
 # UTF-8
 # PyInstaller 版本资源模板：让 exe 属性页显示中文名称与版本。
-# 与 study_timer/config.py 的 VERSION = "2.0.0" 对齐（四段式补 0）。
+# 与 study_timer/config.py 的 VERSION = "2.1.0" 对齐（四段式补 0）。
 # 用法：pyinstaller ... --version-file version_info.txt
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(2, 0, 0, 0),
-    prodvers=(2, 0, 0, 0),
+    filevers=(2, 1, 0, 0),
+    prodvers=(2, 1, 0, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -21,12 +21,12 @@ VSVersionInfo(
           [
             StringStruct('CompanyName', 'StudyTimer'),
             StringStruct('FileDescription', '学习打卡 - 学习计时与习惯记录'),
-            StringStruct('FileVersion', '2.0.0.0'),
+            StringStruct('FileVersion', '2.1.0.0'),
             StringStruct('InternalName', 'StudyTimer'),
             StringStruct('LegalCopyright', 'Copyright (C) 2026'),
             StringStruct('OriginalFilename', '学习打卡.exe'),
             StringStruct('ProductName', '学习打卡'),
-            StringStruct('ProductVersion', '2.0.0.0')
+            StringStruct('ProductVersion', '2.1.0.0')
           ]
         )
       ]

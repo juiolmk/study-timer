@@ -32,10 +32,12 @@ from ..services import (
 )
 from ..single_instance import SingleInstance
 from ..storage import Repository
+from ..tasks import carry_over_unfinished, create_task, task_minutes, today_tasks
 from .pages.home import HomePage
 from .pages.records import RecordsPage
 from .pages.settings import SettingsPage
 from .pages.stats import StatsPage
+from .pages.tasks import TaskPage
 from .theme import Theme, configure_ttk
 from .widgets import Card, RoundedButton, Segmented, TopNavButton, make_entry
 
@@ -48,12 +50,16 @@ class App:
         self.repo = Repository()
         self.store = self.repo.load()
         self._recovered_from_backup = self.repo.last_load_recovered
+        # 未完成的任务次日自动顺延到今天
+        if carry_over_unfinished(self.store):
+            self.repo.save(self.store)
         self.stats = StatsService(self.store)
         self.timer = TimerService()
         self.pomodoro_phase = PHASE_WORK
         self.completed_rounds = 0
         self.session_title = ""
         self.session_tag = ""
+        self.current_task_id = ""
 
         self._alive = True
         self._finishing = False
@@ -121,6 +127,7 @@ class App:
 
         self.pages = {
             "home": HomePage(self.content, self, self._theme),
+            "tasks": TaskPage(self.content, self, self._theme),
             "records": RecordsPage(self.content, self, self._theme),
             "stats": StatsPage(self.content, self, self._theme),
             "settings": SettingsPage(self.content, self, self._theme),
@@ -147,6 +154,7 @@ class App:
         self.nav_buttons = {}
         items = [
             ("home", "首页"),
+            ("tasks", "任务"),
             ("records", "记录"),
             ("stats", "统计"),
             ("settings", "设置"),
@@ -226,6 +234,67 @@ class App:
             self.streak_mini.configure(text=f"🔥 连续 {self.stats.current_streak()} 天")
         except Exception:
             logger.exception("更新连续打卡徽标失败")
+
+    # ------------------------------------------------------------ 任务
+    def today_tasks(self):
+        return today_tasks(self.store)
+
+    def add_task(self, title, priority=1, tag=""):
+        try:
+            task = create_task(title, priority, tag)
+        except ValueError:
+            return None
+        self.store.tasks.append(task)
+        self.repo.save(self.store)
+        self.refresh_all()
+        return task
+
+    def toggle_task(self, task):
+        task.done = not task.done
+        task.completed_at = (datetime.now().isoformat(timespec="seconds")
+                             if task.done else "")
+        self.repo.save(self.store)
+        self.refresh_all()
+
+    def cycle_task_priority(self, task):
+        task.priority = (task.priority + 1) % 3
+        self.repo.save(self.store)
+        self.refresh_all()
+
+    def delete_task(self, task):
+        if task in self.store.tasks:
+            self.store.tasks.remove(task)
+        if self.current_task_id == task.id:
+            self.current_task_id = ""
+        self.repo.save(self.store)
+        self.refresh_all()
+
+    def task_minutes(self, task):
+        return task_minutes(self.store.records, task.id)
+
+    def current_task(self):
+        return next((task for task in self.store.tasks
+                     if task.id == self.current_task_id), None)
+
+    def start_task(self, task):
+        """点击任务：直接开始计时，不弹“这次学什么”。"""
+        if task.done:
+            self.toast("这个任务已经完成了")
+            return False
+        if self.timer.is_active:
+            self.toast("请先结束当前计时")
+            return False
+        self.current_task_id = task.id
+        self.session_title = task.title
+        self.session_tag = task.tag
+        if self.timer.mode == MODE_COUNTDOWN:
+            self.pomodoro_phase = PHASE_WORK
+        self.timer.start()
+        home = self.pages.get("home")
+        if home:
+            home.update_timer_display()
+            home.refresh_tasks()
+        return True
 
     # ------------------------------------------------------------ 计时循环
     def _tick(self):
@@ -308,7 +377,8 @@ class App:
             default_title = self.session_title
         else:
             default_title = "番茄专注" if mode == MODE_COUNTDOWN else ""
-        self.open_record_dialog(duration_seconds=seconds, default_title=default_title)
+        self.open_record_dialog(duration_seconds=seconds, default_title=default_title,
+                                task_id=self.current_task_id)
 
     def _auto_record_work(self, seconds: float):
         """番茄钟完成时自动落一条默认记录，避免休息打断记录流程。"""
@@ -324,11 +394,13 @@ class App:
             title=self.session_title or "番茄专注",
             tag=self.session_tag or self.last_used_tag(),
             note="",
+            task_id=self.current_task_id,
         )
         self.store.records.append(record)
         self.store.checkins.add(record.date)
         self.repo.save(self.store)
         self.refresh_all()
+        self.current_task_id = ""
 
     def _start_break(self):
         """按已完成轮数自动开始短休或长休。"""
@@ -370,14 +442,31 @@ class App:
             logger.debug("提示音播放失败", exc_info=True)
 
     # ------------------------------------------------------------ 记录弹窗
-    def open_record_dialog(self, duration_seconds: float = 0, record=None, default_title: str = ""):
+    def _center_window(self, win, width, height):
+        """把模态窗口居中到主窗口，避免出现在屏幕左上角。"""
+        try:
+            self.root.update_idletasks()
+            x = self.root.winfo_rootx() + max(
+                0, (self.root.winfo_width() - width) // 2)
+            y = self.root.winfo_rooty() + max(
+                0, (self.root.winfo_height() - height) // 2)
+            win.geometry(f"{width}x{height}+{x}+{y}")
+        except Exception:
+            logger.debug("居中窗口失败", exc_info=True)
+            win.geometry(f"{width}x{height}")
+
+    def open_record_dialog(self, duration_seconds: float = 0, record=None,
+                           default_title: str = "", task_id: str | None = None):
         t = self._theme
         p = t.p
+
+        if task_id is None:
+            task_id = self.current_task_id
 
         win = tk.Toplevel(self.root)
         win.title("编辑记录" if record else "记录学习")
         win.configure(bg=p.bg)
-        win.geometry("480x510")
+        self._center_window(win, 480, 510)
         win.transient(self.root)
         win.grab_set()
         win.resizable(False, False)
@@ -481,12 +570,15 @@ class App:
                     title=title,
                     tag=tag,
                     note=note,
+                    task_id=task_id or "",
                 ))
 
             self.store.checkins.add(day)
             self.repo.save(self.store)
             win.destroy()
             self.refresh_all()
+            if not record:
+                self.current_task_id = ""
             self.toast("记录已保存")
 
         buttons = tk.Frame(card, bg=p.surface)
@@ -520,7 +612,7 @@ class App:
         win = tk.Toplevel(self.root)
         win.title("开始专注")
         win.configure(bg=p.bg)
-        win.geometry("430x300")
+        self._center_window(win, 430, 300)
         win.transient(self.root)
         win.grab_set()
         win.resizable(False, False)
@@ -584,7 +676,7 @@ class App:
         win = tk.Toplevel(self.root)
         win.title("快速补记")
         win.configure(bg=p.bg)
-        win.geometry("470x540")
+        self._center_window(win, 470, 540)
         win.transient(self.root)
         win.grab_set()
         win.resizable(False, False)

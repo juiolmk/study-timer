@@ -87,6 +87,7 @@ class Record:
     title: str = ""
     note: str = ""
     tag: str = ""
+    task_id: str = ""
 
     @classmethod
     def from_dict(cls, data: dict) -> "Record":
@@ -103,6 +104,7 @@ class Record:
             title=_as_str(data.get("title")),
             note=_as_str(data.get("note")),
             tag=_as_str(data.get("tag")),
+            task_id=_as_str(data.get("task_id")),
         )
 
     def to_dict(self) -> dict:
@@ -115,7 +117,46 @@ class Record:
             "title": self.title,
             "note": self.note,
             "tag": self.tag,
+            "task_id": self.task_id,
         }
+
+
+@dataclass
+class Task:
+    """今日任务：按优先级排序，点击开始计时。"""
+
+    id: str
+    date: str            # YYYY-MM-DD（计划日）
+    title: str
+    priority: int = 1    # 0 高 / 1 中 / 2 低
+    tag: str = ""
+    done: bool = False
+    created_at: str = ""
+    completed_at: str = ""
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Task":
+        if not isinstance(data, dict):
+            raise ValidationError("单条任务必须是对象")
+        title = _as_str(data.get("title")).strip()
+        if not title:
+            raise ValidationError("任务标题不能为空")
+        day = _as_str(data.get("date")).strip()
+        if not day:
+            day = datetime.now().strftime("%Y-%m-%d")
+        return cls(
+            id=_as_str(data.get("id")) or uuid.uuid4().hex,
+            date=_parse_date(day),
+            title=title,
+            priority=_parse_int(data.get("priority"), 1, 0, 2),
+            tag=_as_str(data.get("tag")).strip(),
+            done=_parse_flag(data.get("done"), False),
+            created_at=_as_str(data.get("created_at")),
+            completed_at=_as_str(data.get("completed_at")),
+        )
+
+    def to_dict(self) -> dict:
+        return asdict(self)
 
 
 @dataclass
@@ -199,6 +240,7 @@ class Store:
     version: int = SCHEMA_VERSION
     settings: Settings = field(default_factory=Settings)
     records: list = field(default_factory=list)
+    tasks: list = field(default_factory=list)
     checkins: set = field(default_factory=set)
 
     def tags(self):
@@ -210,6 +252,7 @@ class Store:
             "version": SCHEMA_VERSION,
             "settings": self.settings.to_dict(),
             "records": [r.to_dict() for r in self.records],
+            "tasks": [t.to_dict() for t in self.tasks],
             "checkins": sorted(self.checkins),
         }
 
@@ -231,6 +274,13 @@ class Store:
             raise ValidationError("records 必须是数组")
         records = [Record.from_dict(item) for item in raw_records]
 
+        raw_tasks = data.get("tasks", [])
+        if raw_tasks is None:
+            raw_tasks = []
+        if not isinstance(raw_tasks, list):
+            raise ValidationError("tasks 必须是数组")
+        tasks = [Task.from_dict(item) for item in raw_tasks]
+
         raw_checkins = data.get("checkins", [])
         if isinstance(raw_checkins, dict):
             checkins = {str(k) for k, v in raw_checkins.items() if v}
@@ -243,4 +293,5 @@ class Store:
         for record in records:
             checkins.add(record.date)
 
-        return cls(version=SCHEMA_VERSION, settings=settings, records=records, checkins=checkins)
+        return cls(version=SCHEMA_VERSION, settings=settings, records=records,
+                   tasks=tasks, checkins=checkins)

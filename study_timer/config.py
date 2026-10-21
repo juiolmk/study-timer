@@ -5,7 +5,7 @@ import os
 
 APP_NAME = "学习打卡"
 APP_NAME_EN = "StudyTimer"
-VERSION = "2.0.0"
+VERSION = "2.1.0"
 
 SCHEMA_VERSION = 2
 
