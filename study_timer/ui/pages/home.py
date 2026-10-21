@@ -354,9 +354,9 @@ class HomePage(tk.Frame):
                 return
             if task:
                 self.app.current_task_id = ""
-            if prompt and self.app.store.settings.ask_before_start:
-                self.app.open_start_dialog(self._begin_start)
-                return
+            # 没有任务时直接自由计时；内容可在结束记录时补充
+            self.app.session_title = ""
+            self.app.session_tag = ""
             self._begin_start()
         elif timer.is_running:
             timer.pause()

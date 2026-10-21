@@ -322,6 +322,18 @@ class RecordsPaginationTest(_TkAppFixture):
         self.assertLessEqual(abs(win.winfo_y() - expected_y), 5)
         win.destroy()
 
+    def test_free_start_skips_dialog(self):
+        self.app.current_task_id = ""
+        before = len([w for w in self.root.winfo_children()
+                      if isinstance(w, tk.Toplevel)])
+        self.app.pages["home"].toggle()
+        self.root.update()
+        after = len([w for w in self.root.winfo_children()
+                     if isinstance(w, tk.Toplevel)])
+        self.assertTrue(self.app.timer.is_running)
+        self.assertEqual(before, after, "自由计时不应再弹“这次学什么”")
+        self.app.timer.stop()
+
     def test_task_page_and_start_task(self):
         task = self.app.add_task("写论文", 0, "论文")
         self.assertIsNotNone(task)
@@ -338,31 +350,6 @@ class RecordsPaginationTest(_TkAppFixture):
 
         self.app.timer.stop()
         self.app.current_task_id = ""
-
-
-# ---------------------------------------------------------------- 设置文案
-class SettingsWordingTest(_TkAppFixture):
-    """锁住“开始前询问”文案：说明只在按钮启动时询问，快捷键不询问。"""
-
-    PROMPT_TEXT = "开始计时前询问学习内容（仅按钮启动；快捷键不询问）"
-    OLD_TEXT = "开始计时前询问学习内容（可跳过）"
-
-    def _collect_checktexts(self, widget):
-        """递归收集该页面下所有 Checkbutton 的文案。"""
-        texts = []
-        for child in widget.winfo_children():
-            if isinstance(child, tk.Checkbutton):
-                texts.append(child.cget("text"))
-            texts.extend(self._collect_checktexts(child))
-        return texts
-
-    def test_prompt_checkbox_wording(self):
-        self.app.show_page("settings")
-        self.root.update()
-
-        texts = self._collect_checktexts(self.app.pages["settings"])
-        self.assertIn(self.PROMPT_TEXT, texts)
-        self.assertNotIn(self.OLD_TEXT, texts, "旧文案不应残留")
 
 
 # ---------------------------------------------------------------- 图标降级

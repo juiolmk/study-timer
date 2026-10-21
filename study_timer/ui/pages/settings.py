@@ -61,18 +61,6 @@ class SettingsPage(tk.Frame):
         time_entry = make_entry(form, self.t, width=8, textvariable=self.remind_time_var)
         self._row(form, 1, "提醒时间", time_entry)
 
-        # 计时习惯
-        form = self._section("计时", "开始前可先明确这次学什么")
-        self.ask_before_start_var = tk.BooleanVar(value=bool(settings.ask_before_start))
-        ask_check = tk.Checkbutton(
-            form, text="开始计时前询问学习内容（仅按钮启动；快捷键不询问）",
-            variable=self.ask_before_start_var,
-            font=self.t.font, bg=p.surface, fg=p.text,
-            activebackground=p.surface, activeforeground=p.text,
-            selectcolor=p.surface_alt, bd=0, highlightthickness=0,
-        )
-        self._row(form, 0, "开始前询问", ask_check)
-
         # 番茄钟
         form = self._section("番茄钟", "专注结束后按轮次自动短休 / 长休")
         self.preset_var = tk.StringVar(value=str(settings.focus_preset))
@@ -248,7 +236,6 @@ class SettingsPage(tk.Frame):
         settings.remind = bool(self.remind_var.get())
         settings.remind_time = remind_time
         settings.hotkey_enabled = bool(self.hotkey_var.get())
-        settings.ask_before_start = bool(self.ask_before_start_var.get())
         try:
             settings.focus_preset = int(self.preset_var.get())
         except Exception:

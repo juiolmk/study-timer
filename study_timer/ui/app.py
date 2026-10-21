@@ -401,6 +401,8 @@ class App:
         self.repo.save(self.store)
         self.refresh_all()
         self.current_task_id = ""
+        self.session_title = ""
+        self.session_tag = ""
 
     def _start_break(self):
         """按已完成轮数自动开始短休或长休。"""
@@ -579,6 +581,8 @@ class App:
             self.refresh_all()
             if not record:
                 self.current_task_id = ""
+                self.session_title = ""
+                self.session_tag = ""
             self.toast("记录已保存")
 
         buttons = tk.Frame(card, bg=p.surface)
